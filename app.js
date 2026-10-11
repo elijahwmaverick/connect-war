@@ -202,7 +202,7 @@ function handle(seat, type, p) {
     if (type === "drop") e = CW.drop(g, Number(p.c));
     else e = CW.ability(g, { id: p.id, c: Number(p.c), r: Number(p.r), r2: Number(p.r2), c2: Number(p.c2) }, room.picks[seat]);
     if (e) return e;
-    if (g.over) { clearTimer(); room.deadline = null; } else armTimer(type === "ability" && (p.id === "flip" || p.id === "pop") ? 700 : 0);
+    if (g.over) { clearTimer(); room.deadline = null; } else armTimer(type === "ability" && (p.id === "flip" || p.id === "pop" || p.id === "gravity") ? 800 : 0);
     return null;
   }
   return "Unknown action.";
@@ -300,7 +300,7 @@ function onView(v) {
       flip = null; busy = false;
       if (lastSeq !== -1 && g.ev) {
         const t = g.ev.type;
-        if (t === "flip" || t === "pop") flip = { type: t, c: g.ev.c, prev: g.ev.prev, phase: 1 };
+        if (t === "flip" || t === "pop" || t === "gravity") flip = { type: t, c: g.ev.c, prev: g.ev.prev, phase: 1 };
         else if (g.ev.clears && g.ev.prev) flip = { type: "clear", prev: g.ev.prev, clears: g.ev.clears, phase: 1, ev: g.ev };
         else anim = { ...g.ev, type: t === "block" ? "drop" : t };
       }
@@ -328,7 +328,7 @@ function onView(v) {
   if (flip && flip.phase === 1) {
     busy = flip.type !== "clear"; render();
     const f = flip;
-    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : f.type === "clear" ? 820 : 560);
+    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : f.type === "clear" ? 820 : f.type === "gravity" ? 720 : 560);
   } else render();
 }
 
@@ -537,6 +537,7 @@ function overHtml() {
 }
 
 // After fours are removed, discs that were above them fall by the number removed in that column.
+const gravCls = () => (flip && flip.phase === 1 && flip.type === "gravity" ? "grav1" : "");
 function clearedFall(f, r, c) {
   let n = 0, maxRow = -1;
   for (const grp of f.clears) for (const k of grp.cells) { const [rr, cc] = k.split(",").map(Number); if (cc === c) { n++; maxRow = Math.max(maxRow, rr); } }
@@ -578,7 +579,7 @@ function renderPlay() {
       if (v) {
         let n = 0, extra = "", style = "";
         if (anim && anim.type === "drop" && at(anim.r, anim.c)) n = r + 1;
-        if (flip && flip.phase === 2 && flip.type !== "clear" && flip.c === c) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
+        if (flip && flip.phase === 2 && (flip.type === "gravity" || (flip.type !== "clear" && flip.c === c))) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
         if (flip && flip.phase === 2 && flip.type === "clear") n = clearedFall(flip, r, c);
         if (flip && flip.phase === 1 && flip.type === "clear" && flip.ev && flip.ev.type === "drop" && at(flip.ev.r, flip.ev.c)) n = r + 1;
         if (flip && flip.phase === 1 && flip.type === "clear" && cleared.has(r + "," + c)) { extra += " scored"; style += `--wd:${(0.25 + cleared.get(r + "," + c) * 0.06).toFixed(2)}s;`; }
@@ -627,7 +628,7 @@ function renderPlay() {
   ${dc}
   <div class="players">${panel(V.seat)}${panel(opp(V.seat))}</div>
   <p class="status" aria-live="polite">${statusText()}</p>
-  <div class="board-wrap"><div class="board ${!rt && g.over && g.result && !(flip && flip.phase === 1) ? "won" : ""} ${ddFlash ? "dd-flash" : ""}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${flip && flip.type === "clear" && flip.ev && flip.ev.contested ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>
+  <div class="board-wrap"><div class="board ${!rt && g.over && g.result && !(flip && flip.phase === 1) ? "won" : ""} ${ddFlash ? "dd-flash" : ""} ${gravCls()}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${flip && flip.type === "clear" && flip.ev && flip.ev.contested ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>
   <div class="letters">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
   ${tray}
   <p class="err">${err}</p>
@@ -668,7 +669,7 @@ function renderTabletop({ g, g0, now, cols, pend, ddFlash }) {
   app.innerHTML = `${header(`<div class="timer mclock ${g0.sudden ? "warn" : ""}"><span id="mclock">${g0.sudden ? "SUDDEN DEATH" : fmtClock(g0.endsAt - now)}</span></div>`)}
   ${side(2)}
   <p class="status tabletop-status" aria-live="polite">${status}</p>
-  <div class="board-wrap"><div class="board ${ddFlash ? "dd-flash" : ""}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${flip && flip.type === "clear" && flip.ev && flip.ev.contested ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g0.over && showOver ? overHtml() : ""}</div>
+  <div class="board-wrap"><div class="board ${ddFlash ? "dd-flash" : ""} ${gravCls()}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${flip && flip.type === "clear" && flip.ev && flip.ev.contested ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g0.over && showOver ? overHtml() : ""}</div>
   ${side(1)}
   ${g0.over ? `<button class="ghost" data-act="leave">Leave game</button>` : ""}`;
 }

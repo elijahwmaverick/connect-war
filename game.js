@@ -9,7 +9,8 @@
     pop:    { name: "Pop",         cost: 3, t: "col",  desc: "Remove the opponent's bottom disc. Everything above falls." },
     swap:   { name: "Swap",        cost: 4, t: "pair", desc: "Swap two adjacent discs, one yours and one theirs." },
     double: { name: "Double Drop", cost: 4, t: "none", desc: "Drop a second disc in another column. It can't complete a 4." },
-    flip:   { name: "Flip",        cost: 5, t: "col",  desc: "Invert one column top to bottom." }
+    flip:   { name: "Flip",        cost: 5, t: "col",  desc: "Invert one column top to bottom." },
+    gravity:{ name: "Gravity Flip", cost: 6, t: "none", desc: "Reverse gravity: every column turns upside down at once." }
   };
   const opp = p => 3 - p;
   const blank = v => Array.from({ length: ROWS }, () => Array(COLS).fill(v));
@@ -178,6 +179,7 @@
       ev = { type: "swap", r: a.r, c: a.c, r2: a.r2, c2: a.c2 };
       g.last = null; note = `Player ${p} swapped two discs.`;
     }
+    if (id === "gravity") { ev = { type: "gravity", prev: clone(g) }; for (let cc = 0; cc < COLS; cc++) writeStack(g, cc, stack(g, cc).reverse()); g.last = null; note = `Player ${p} flipped gravity.`; }
     if (id === "double") { g.dd = true; g.dropsLeft = 2; note = `Player ${p} used Double Drop.`; }
     g.ev = ev; g.seq++; g.note = note;
     if (resolve(g)) return null;

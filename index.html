@@ -195,6 +195,11 @@ details ul{padding-left:18px;margin:8px 0 0}
 .side .tray .ab{padding:7px 6px}
 .side .tray .ad{font-size:11px}
 .tabletop-status{min-height:1.4em;text-align:center;font-size:14px}
+
+/* Gravity Flip: the whole board turns over, then discs fall */
+.board.grav1{animation:gravflip .7s cubic-bezier(.6,0,.4,1) forwards;box-shadow:inset 0 -5px 0 var(--board-edge),0 0 0 3px var(--gold),0 0 26px 6px rgba(242,193,78,.45)}
+@keyframes gravflip{0%{transform:perspective(900px) rotateX(0)}100%{transform:perspective(900px) rotateX(180deg)}}
+@media (prefers-reduced-motion:reduce){.board.grav1{animation:none}}
 </style>
 </head>
 <body>

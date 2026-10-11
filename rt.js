@@ -6,7 +6,7 @@
   const { ROWS, COLS, L, AB, opp } = C;
   const GCD = 150; // global cooldown after any action
   const DROP_CD = 2500, MATCH_MS = 5 * 60 * 1000, TARGET = 5, FREEZE_MS = 5000;
-  const CD = { block: 5000, freeze: 5000, anchor: 5000, lift: 5000, pop: 7500, swap: 10000, double: 10000, flip: 10000 };
+  const CD = { block: 5000, freeze: 5000, anchor: 5000, lift: 5000, pop: 7500, swap: 10000, double: 10000, flip: 10000, gravity: 15000 };
   const DESC = {
     ...Object.fromEntries(Object.entries(AB).map(([k, v]) => [k, v.desc])),
     freeze: "Lock a column for your opponent for 5 seconds.",
@@ -119,6 +119,7 @@
       [g.grid[a.r][a.c], g.grid[a.r2][a.c2]] = [g.grid[a.r2][a.c2], g.grid[a.r][a.c]];
       ev = { type: "swap", r: a.r, c: a.c, r2: a.r2, c2: a.c2 }; g.last = null; note = `Player ${p} swapped two discs.`;
     }
+    if (id === "gravity") { ev = { type: "gravity", prev: C.clone(g) }; for (let cc = 0; cc < COLS; cc++) C.writeStack(g, cc, C.stack(g, cc).reverse()); g.last = null; note = `Player ${p} flipped gravity.`; }
     if (id === "double") { g.ready[p].drop = 0; ev = { type: "double" }; note = `Player ${p} reset their drop cooldown.`; }
     g.ready[p][id] = now + CD[id] * mult(g);
     g.ready[p].gcd = now + GCD;
