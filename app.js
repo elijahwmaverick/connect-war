@@ -78,6 +78,65 @@ function sayHello() {
   joinTimer = setInterval(knock, 2000);
 }
 
+/* ================= matchmaking ================= */
+// Everyone searching for a mode joins the presence channel "cw-mm-<mode>". The player who has been
+// waiting longest invites the next-longest; the invited player accepts; the inviter hosts a fresh room.
+let mm = null; // { mode, ch, since, inviteTo, inviteCode, inviteUntil, done, count }
+function mmPlayers() {
+  if (!mm || !mm.ch) return [];
+  return Object.values(mm.ch.presenceState()).flat().filter(p => p.searching).sort((a, b) => a.since - b.since || (a.token < b.token ? -1 : 1));
+}
+function mmTick() {
+  if (!mm || mm.done) return;
+  const list = mmPlayers(), others = list.filter(p => p.token !== token);
+  mm.count = list.length;
+  const now = Date.now();
+  if (mm.inviteTo && now < mm.inviteUntil) return; // waiting on an answer
+  mm.inviteTo = null;
+  const next = others[0];
+  // Only the longer-waiting player of a pair sends the invite, so both sides agree.
+  if (next && (mm.since < next.since || (mm.since === next.since && token < next.token))) {
+    mm.inviteTo = next.token; mm.inviteCode = randomCode(); mm.inviteUntil = now + 3000;
+    mm.ch.send({ type: "broadcast", event: "invite", payload: { from: token, to: next.token, code: mm.inviteCode } });
+  }
+  if (V === null && !code) render();
+}
+function startMatchmaking() {
+  if (!sb) return;
+  stopMatchmaking();
+  err = "";
+  mm = { mode: gameMode, since: Date.now(), count: 1, done: false };
+  const ch = sb.channel("cw-mm-" + gameMode, { config: { broadcast: { self: false }, presence: { key: token } } });
+  mm.ch = ch;
+  ch.on("presence", { event: "sync" }, () => mmTick())
+    .on("broadcast", { event: "invite" }, ({ payload }) => {
+      if (!mm || mm.done || payload.to !== token) return;
+      mm.done = true;
+      ch.send({ type: "broadcast", event: "accept", payload: { from: token, to: payload.from, code: payload.code } });
+      const c = payload.code;
+      setTimeout(() => { stopMatchmaking(); joinGame(c); }, 150);
+    })
+    .on("broadcast", { event: "accept" }, ({ payload }) => {
+      if (!mm || mm.done || payload.to !== token || payload.code !== mm.inviteCode) return;
+      mm.done = true;
+      const mode = mm.mode, guest = payload.from, c = payload.code;
+      stopMatchmaking();
+      createGame(c, { mode, timerOn: true, expectGuest: guest });
+    })
+    .subscribe(async status => {
+      if (status === "SUBSCRIBED") { await ch.track({ token, since: mm.since, searching: true }); mmTick(); }
+      else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") { err = "Can't reach matchmaking. Check your connection."; stopMatchmaking(); render(); }
+    });
+  mm.timer = setInterval(mmTick, 1000);
+  render();
+}
+function stopMatchmaking() {
+  if (!mm) return;
+  if (mm.timer) clearInterval(mm.timer);
+  if (mm.ch) sb.removeChannel(mm.ch);
+  mm = null;
+}
+
 /* ================= host: authoritative room ================= */
 let room = null, hostTimer = null;
 // Local play: both seats on this device, no network.
@@ -105,7 +164,7 @@ function view(seat) {
   const other = opp(seat);
   const both = !!(room.picks[1] && room.picks[2]);
   return {
-    code: room.code, local: isLocal, mode: room.mode || "tactics", hostNow: Date.now(), seat, phase: room.phase, timerOn: room.timerOn,
+    code: room.code, matched: !!room.expectGuest, local: isLocal, mode: room.mode || "tactics", hostNow: Date.now(), seat, phase: room.phase, timerOn: room.timerOn,
     opponentJoined: seat === 1 ? !!room.guest : true,
     opponentConnected: seat === 1 ? peerOnline : true,
     myPicks: room.picks[seat], oppLocked: !!room.picks[other], oppPicks: both ? room.picks[other] : null,
@@ -213,6 +272,7 @@ function handle(seat, type, p) {
 
 function hostHello(t) {
   if (!room) return;
+  if (!room.guest && room.expectGuest && room.expectGuest !== t) { send("reject", { to: t, reason: "That game is reserved for a matched player." }); return; }
   if (!room.guest) { room.guest = t; if (room.phase === "lobby") room.phase = "draft"; }
   else if (room.guest !== t) { send("reject", { to: t, reason: "That game already has two players." }); return; }
   computePeer();
@@ -243,10 +303,12 @@ function act(type, p, cb) {
   send("action", { token, id, type, p });
 }
 
-function createGame() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const c = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-  room = newRoom(c, timerOn, gameMode);
+const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const randomCode = () => Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join("");
+function createGame(fixedCode, opts = {}) {
+  const c = fixedCode || randomCode();
+  room = newRoom(c, opts.timerOn ?? timerOn, opts.mode || gameMode);
+  if (opts.expectGuest) room.expectGuest = opts.expectGuest;
   store("cw_room", c); store("cw_role", "host");
   history.replaceState(null, "", "#" + c);
   openChannel(c, true);
@@ -272,6 +334,7 @@ function joinGame(c) {
   openChannel(c, false);
 }
 function leaveLocal() {
+  stopMatchmaking();
   closeChannel(); isLocal = false; localHandoff = false;
   if (isHost && room) store("cw_host_" + room.code, null);
   clearTimer(); room = null; isHost = false; code = null; V = null;
@@ -403,6 +466,7 @@ function render() {
 }
 function renderScreen() {
   if (localHandoff) return renderHandoff();
+  if (mm && !V) return renderSearching();
   if (!V) return renderHome();
   if (V.phase === "lobby") return renderLobby();
   if (V.phase === "draft") return renderDraft();
@@ -427,6 +491,19 @@ function renderHandoff() {
   </section>`;
 }
 
+function renderSearching() {
+  const n = Math.max(0, (mm.count || 1) - 1);
+  app.innerHTML = `${header()}
+  <section class="handoff">
+    <div class="eyebrow">${mm.mode === "rt" ? "Connect War: Full Auto" : "Connect War"} · Matchmaking</div>
+    <div class="radar" aria-hidden="true"><i></i><i></i><i></i></div>
+    <h2>Finding an opponent…</h2>
+    <p class="muted">${n ? `${n} other player${n === 1 ? "" : "s"} searching. Pairing you now.` : "No one else is searching yet. You'll be matched as soon as someone joins."}</p>
+    <button class="ghost" data-act="mm-cancel">Cancel</button>
+    <p class="err">${err}</p>
+  </section>`;
+}
+
 function renderHome() {
   const waiting = code && !isHost;
   app.innerHTML = `${header()}
@@ -437,11 +514,12 @@ function renderHome() {
       <button class="mode ${gameMode === "rt" ? "on" : ""}" data-mode="rt" aria-pressed="${gameMode === "rt"}"><span class="cn">Connect War: Full Auto</span><span class="cd">Real time. No turns: drop charges and ability cooldowns. Scored fours turn to stone. First to 5 in 5 minutes.</span></button>
     </div>
     ${gameMode === "tactics" ? `<label class="tog"><input type="checkbox" id="timerOn" ${timerOn ? "checked" : ""}> 20-second turn clock</label>` : ""}
+    <button class="primary" data-act="matchmake" ${sb ? "" : "disabled"}>Find match</button>
     <div class="row2">
-      <button class="primary" data-act="create" ${sb ? "" : "disabled"}>Play online</button>
+      <button class="ghost strong" data-act="create" ${sb ? "" : "disabled"}>Play a friend</button>
       <button class="ghost strong" data-act="local">Play local</button>
     </div>
-    <p class="muted small">Online: send your opponent a code. Local: two players on this phone${gameMode === "rt" ? ", one at each end" : ", passing it between turns"}.</p>
+    <p class="muted small">Find match: play the next person searching. Play a friend: send them a code. Local: two players on this phone${gameMode === "rt" ? ", one at each end" : ", passing it between turns"}.</p>
     ${sb ? "" : `<p class="err">Online play is unavailable: the game server didn't load. Local play still works.</p>`}
     <div class="divider">JOIN A GAME</div>
     <form class="field" id="joinForm" ${sb ? "" : "hidden"}><input id="code" maxlength="4" placeholder="CODE" autocomplete="off" aria-label="Game code" value="${waiting ? code : ""}"><button class="primary" type="submit">Join</button></form>
@@ -453,6 +531,11 @@ function renderHome() {
 }
 
 function renderLobby() {
+  if (V.matched) {
+    app.innerHTML = `${header()}<section class="handoff"><div class="eyebrow">${modeName()} · Matchmaking</div>
+      <div class="radar" aria-hidden="true"><i></i><i></i><i></i></div><h2>Opponent found</h2><p class="muted">Connecting…</p><p class="err">${err}</p></section>`;
+    return;
+  }
   const url = location.origin + location.pathname + "#" + V.code;
   app.innerHTML = `${header()}
   <section class="setup">
@@ -774,6 +857,8 @@ app.addEventListener("click", e => {
     const a = actEl.dataset.act;
     if (a === "create") { err = ""; return createGame(); }
     if (a === "local") { err = ""; return createLocal(); }
+    if (a === "matchmake") { return startMatchmaking(); }
+    if (a === "mm-cancel") { stopMatchmaking(); return render(); }
     if (a === "menu") { confirmMenu = true; return app.insertAdjacentHTML("beforeend", menuModal()); }
     if (a === "menu-no") { confirmMenu = false; const m = app.querySelector(".modal"); if (m) m.remove(); return; }
     if (a === "menu-yes") { confirmMenu = false; err = ""; return leave(); }

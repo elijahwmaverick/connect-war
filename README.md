@@ -39,7 +39,7 @@ If you've turned on **Realtime → Settings → "Allow public access" = off** (p
 - **Connect War** (default): turn based with energy (max 7) and a 20-second turn clock. One four wins.
 - **Connect War: Full Auto**: real time, no turns. You hold 3 drop charges (one recharges every 2.5s), each ability has its own cooldown, and every action starts a 0.15s global cooldown. Each four scores a point and turns into fixed stones that never move; a grenade destroys them, and a drop smashes the first fixed stone it lands on. A four can be Contested: if the opponent makes a four within 0.5s, neither scores. First to 5, or the higher score after 5 minutes; a tie goes to sudden death with cooldowns cut to 1/4.
 
-Both modes can be played online or locally on one phone.
+Both modes can be played three ways: **Find match** (paired with the next player searching for the same mode), **Play a friend** (share a 4-letter code or link), or **Play local** (two players on one phone).
 
 ## 3. Play
 
