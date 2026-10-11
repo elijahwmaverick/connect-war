@@ -42,8 +42,22 @@
     const c = chargesAt(g, seat, now);
     g.charges[seat] = { n: c.n - 1, next: c.n === MAX_CHARGES ? now + c.step : c.next };
   }
+  // A drop travels in from the entry side. If the first thing it meets is a fixed stone, it shatters
+  // that one stone and keeps going. Returns { r, broke } (r = -1 when the column is blocked).
+  function landing(g, c) {
+    const up = C.up(g), step = up ? -1 : 1, start = up ? ROWS - 1 : 0, end = up ? -1 : ROWS;
+    let broke = null;
+    for (let r = start; r !== end; r += step) {
+      const v = g.grid[r][c];
+      if (!v) continue;
+      if (v === C.FIXED && broke === null) { broke = r; continue; }
+      return { r: r - step === start - step ? -1 : r - step, broke };
+    }
+    return { r: end - step, broke };
+  }
+  const columnOpen = (g, c) => landing(g, c).r >= 0 || landing(g, c).broke !== null;
   function canDrop(g, seat, c, now) {
-    return !g.over && c >= 0 && c < COLS && gcdFree(g, seat, now) && chargesAt(g, seat, now).n > 0 && C.topEmpty(g, c) >= 0 && !frozenFor(g, seat, c, now);
+    return !g.over && c >= 0 && c < COLS && gcdFree(g, seat, now) && chargesAt(g, seat, now).n > 0 && columnOpen(g, c) && !frozenFor(g, seat, c, now);
   }
 
   const CONTEST_MS = 500;
@@ -83,7 +97,7 @@
     const a = g.score[1], b = g.score[2];
     if (g.sudden && a !== b) finish(g, a > b ? 1 : 2);
     else if ((a >= TARGET || b >= TARGET) && a !== b) finish(g, a > b ? 1 : 2);
-    if (!g.over && !g.pending && C.isFull(g)) {
+    if (!g.over && !g.pending && [...Array(COLS).keys()].every(c => !columnOpen(g, c))) {
       g.grid = C.blank(0); g.anc = C.blank(false); g.last = null; g.bombs = []; ev.wipe = true;
       g.note += " Board full, so it was wiped.";
     }
@@ -97,14 +111,17 @@
     if (g.over) return "The match is over.";
     if (!gcdFree(g, seat, now)) return "Too fast.";
     if (chargesAt(g, seat, now).n < 1) return "No drop charges left.";
-    if (c < 0 || c >= COLS || C.topEmpty(g, c) < 0) return `Column ${L[c] || "?"} is full.`;
+    if (c < 0 || c >= COLS || !columnOpen(g, c)) return `Column ${L[c] || "?"} is full.`;
     if (frozenFor(g, seat, c, now)) return `Column ${L[c]} is frozen.`;
-    const r = C.topEmpty(g, c);
+    const land = landing(g, c);
+    let r = land.r;
+    if (land.broke !== null) { g.grid[land.broke][c] = 0; g.anc[land.broke][c] = false; if (r < 0) r = land.broke; }
     g.grid[r][c] = seat; g.last = { r, c };
     spendCharge(g, seat, now);
     g.ready[seat].gcd = now + GCD;
     const ev = { type: "drop", r, c };
-    g.note = `Player ${seat} dropped in ${L[c]}.`;
+    if (land.broke !== null) ev.broke = land.broke;
+    g.note = `Player ${seat} dropped in ${L[c]}${land.broke !== null ? " and smashed a stone" : ""}.`;
     settle(g, seat, ev, now);
     g.ev = ev; g.seq++;
     return null;
@@ -201,6 +218,6 @@
     return false;
   }
 
-  const api = { POOL, MAX_CHARGES, chargesAt, GCD, gcdFree, CONTEST_MS, DROP_CD, MATCH_MS, TARGET, FREEZE_MS, CD, DESC, newGame, canDrop, drop, ability, tick, isReady, frozenFor };
+  const api = { landing, columnOpen, POOL, MAX_CHARGES, chargesAt, GCD, gcdFree, CONTEST_MS, DROP_CD, MATCH_MS, TARGET, FREEZE_MS, CD, DESC, newGame, canDrop, drop, ability, tick, isReady, frozenFor };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.RT = api;
 })(typeof window !== "undefined" ? window : globalThis);
