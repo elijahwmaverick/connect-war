@@ -173,7 +173,8 @@ function handle(seat, type, p) {
   if (type === "pick") {
     if (room.phase !== "draft") return "Picks are closed.";
     const ids = p.ids;
-    if (!Array.isArray(ids) || ids.length !== 3 || new Set(ids).size !== 3 || !ids.every(id => AB[id])) return "Pick exactly 3 different abilities.";
+    const pool = room.mode === "rt" ? RT.POOL : Object.keys(AB).filter(id => !AB[id].only);
+    if (!Array.isArray(ids) || ids.length !== 3 || new Set(ids).size !== 3 || !ids.every(id => pool.includes(id))) return "Pick exactly 3 different abilities.";
     if (room.picks[seat]) return "You already locked in.";
     room.picks[seat] = ids.slice();
     if (room.picks[1] && room.picks[2]) startMatch();
@@ -289,7 +290,7 @@ let mode = null, swapSel = null, localMsg = "";
 let lastSeq = -1, lastOver = false, showOver = false, flip = null, busy = false, confirmMenu = false;
 // Short animations in flight. Re-renders resume them part-way (negative animation-delay) instead of restarting or dropping them.
 let fx = [];
-const FX_MS = { drop: 450, freeze: 650, anchor: 550, swap: 500, lift: 600, double: 750, score: 900, contest: 1100, reinforce: 450 };
+const FX_MS = { punch: 650, drop: 450, freeze: 650, anchor: 550, swap: 500, lift: 600, double: 750, score: 900, contest: 1100, reinforce: 450 };
 // Full Auto drop-charge readout, e.g. "Drops ●●○ · 1.4s".
 function dropText(g, seat, now) {
   const ch = RT.chargesAt(g, seat, now);
@@ -486,7 +487,7 @@ function renderDraft() {
     <h2>${V.local ? `Player ${p}: pick 3 abilities` : "Pick 3 abilities"}</h2>
     <p class="muted">${V.local ? (p === 1 ? "Player 2, look away. Picks stay hidden until the match starts." : "Player 1, look away.") : `Your opponent can't see your picks until both of you lock in. ${V.oppLocked ? "Your opponent has locked in." : ""}`}</p>
     ${dc}
-    <div class="cards">${Object.entries(AB).map(([id, a]) => `<button class="card ${sel.includes(id) ? "on" : ""}" data-pick="${id}" aria-pressed="${sel.includes(id)}">
+    <div class="cards">${Object.entries(AB).filter(([id, a]) => (isRT() ? RT.POOL.includes(id) : !a.only)).map(([id, a]) => `<button class="card ${sel.includes(id) ? "on" : ""}" data-pick="${id}" aria-pressed="${sel.includes(id)}">
       <span class="cn">${a.name}</span><span class="cost">${costLabel(id)}</span><span class="cd">${descOf(id)}</span></button>`).join("")}</div>
     <button class="primary" data-act="lock" ${sel.length === 3 ? "" : "disabled"}>Lock in (${sel.length}/3)</button>
     <p class="err">${err}</p>
@@ -528,6 +529,7 @@ const PROMPT = {
   pop: () => `Pop: tap a column whose ${V && V.game && V.game.gdir === -1 ? "top" : "bottom"} disc is your opponent's.`,
   swap: () => "Swap: tap a disc, then an adjacent disc of the other color.",
   flip: () => "Flip: tap a column with 2 or more discs.",
+  punch: () => "Punch In: tap any cell that isn't an enemy disc.",
   reinforce: () => `Reinforce: tap a column to slide your disc in from the ${V && V.game && V.game.gdir === -1 ? "top" : "bottom"}.`,
   grenade: () => "Grenade: tap a column to drop it. It explodes 2 seconds later."
 };
@@ -615,11 +617,11 @@ function renderPlay() {
     let cells = "";
     for (let r = 0; r < ROWS; r++) {
       const v = shown.grid[r][c]; let cc = "cell";
-      if (myTurn && (mt === "own" || mt === "pair") && CW.validCell(g, mode, r, c, swapSel)) cc += " tgt";
+      if (myTurn && (mt === "own" || mt === "pair" || mt === "cell") && CW.validCell(g, mode, r, c, swapSel)) cc += " tgt";
       if (swapSel && swapSel[0] === r && swapSel[1] === c) cc += " sel";
       const wi = wins.get(r + "," + c);
       if (wi !== undefined) cc += " win";
-      let disc = "";
+      let disc = "", disc0 = "";
       const at = (rr, cc2) => rr === r && cc2 === c;
       if (v) {
         let n = 0, extra = "", style = "";
@@ -638,6 +640,12 @@ function renderPlay() {
         if (pfx) { extra += " petrify"; style += pfx.ad; }
         const rfx = fxFind("reinforce", f => f.c === c && (f.gdir === -1 ? r < f.n : r >= ROWS - f.n));
         if (rfx) { extra += " push"; style += rfx.ad + `--push:calc(${rfx.gdir === -1 ? -1 : 1} * (116.3% + 3px));`; }
+        const pufx = fxFind("punch", f => at(f.r, f.c));
+        if (pufx) {
+          const fallN = Math.abs(pufx.r - pufx.from);
+          if (fallN) { const [k, st] = motion(fallN); extra += k; style += st + pufx.ad; } else { extra += " punchin"; style += pufx.ad; }
+          disc0 = `<div class="shock" style="${pufx.ad}"></div>`;
+        }
         const afx = fxFind("anchor", f => at(f.r, f.c));
         if (afx) { extra += " anc-in"; style += afx.ad; }
         const sfx = fxFind("swap", f => at(f.r, f.c) || at(f.r2, f.c2));
@@ -648,7 +656,7 @@ function renderPlay() {
         if (pend && pend.has(r + "," + c) && !(flip && flip.phase === 1)) extra += " pend";
         const lst = g.last && g.last.r === r && g.last.c === c && !g.over;
         if (v === 4) { const b = (g0.bombs || []).find(x => x.id === shown.anc[r][c]); if (b && b.until - now < 900) extra += " fuse-hot"; }
-        disc = `<div class="disc d${v} ${shown.anc[r][c] && v !== 4 ? "anc" : ""}${extra} ${lst ? "last" : ""}" ${style ? `style="${style}"` : ""}></div>`;
+        disc = `<div class="disc d${v} ${shown.anc[r][c] && v !== 4 ? "anc" : ""}${extra} ${lst ? "last" : ""}" ${style ? `style="${style}"` : ""}></div>` + disc0;
       } else {
         const lfx = fxFind("lift", f => at(f.r, f.c));
         if (lfx) disc = `<div class="disc d${lfx.v} lift-out${gup ? " down" : ""}" style="${lfx.ad}"></div>`;
@@ -827,6 +835,10 @@ app.addEventListener("click", e => {
   if (t === "col") {
     if (!CW.validCol(g, mode, c)) { localMsg = "Not a valid column. " + PROMPT[mode](); return render(); }
     return sendAct("ability", { id: mode, c });
+  }
+  if (mode === "punch") {
+    if (!CW.validCell(g, "punch", r, c)) { localMsg = "Punch In can't target an enemy disc or your own disc."; return render(); }
+    return sendAct("ability", { id: "punch", r, c });
   }
   if (mode === "anchor") {
     if (!CW.validCell(g, "anchor", r, c)) { localMsg = "Tap one of your own unanchored discs."; return render(); }

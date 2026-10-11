@@ -7,7 +7,9 @@
   const { ROWS, COLS, L, AB, opp } = C;
   const GCD = 150; // global cooldown after any action
   const DROP_CD = 2500, MAX_CHARGES = 3, MATCH_MS = 5 * 60 * 1000, TARGET = 5, FREEZE_MS = 5000;
-  const CD = { block: 5000, freeze: 5000, anchor: 5000, lift: 5000, pop: 7500, swap: 10000, double: 10000, flip: 10000, gravity: 15000, grenade: 7500, reinforce: 6000 };
+  // Abilities available in Full Auto (Anchor, Lift, Pop and Double Drop are turn-based only).
+  const POOL = ["block", "freeze", "swap", "flip", "grenade", "reinforce", "gravity", "punch"];
+  const CD = { punch: 5000, block: 3500, freeze: 5000, anchor: 5000, lift: 5000, pop: 7500, swap: 10000, double: 10000, flip: 10000, gravity: 15000, grenade: 7500, reinforce: 6000 };
   const DESC = {
     ...Object.fromEntries(Object.entries(AB).map(([k, v]) => [k, v.desc])),
     freeze: "Lock a column for your opponent for 5 seconds.",
@@ -120,6 +122,7 @@
     if (t === "col" && !C.validCol(g, id, c)) return `Not a valid column for ${AB[id].name}.`;
     if (id === "anchor" && !C.validCell(g, id, a.r, a.c)) return "Pick one of your own unanchored discs.";
     if (id === "swap" && !C.partner(g, a.r, a.c, a.r2, a.c2)) return "Pick two adjacent, unanchored discs of different colors.";
+    if (id === "punch" && !C.validCell(g, id, a.r, a.c)) return "Punch In can't target an enemy disc or your own disc.";
 
     let ev = { type: id }, note = "";
     const p = seat;
@@ -135,6 +138,14 @@
       ev = { type: "swap", r: a.r, c: a.c, r2: a.r2, c2: a.c2 }; g.last = null; note = `Player ${p} swapped two discs.`;
     }
     if (id === "grenade") { const r = C.topEmpty(g, c); C.placeGrenade(g, r, c, now); g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} dropped a grenade in ${L[c]}.`; }
+    if (id === "punch") {
+      if (g.grid[a.r][c] === 4) g.bombs = (g.bombs || []).filter(b => b.id !== g.anc[a.r][c]);
+      g.grid[a.r][c] = p; g.anc[a.r][c] = "punch";
+      C.compactCol(g, c);
+      let r2 = a.r; for (let r = 0; r < ROWS; r++) if (g.anc[r][c] === "punch") { r2 = r; g.anc[r][c] = false; }
+      g.last = { r: r2, c }; ev = { type: "punch", r: r2, c, from: a.r };
+      note = `Player ${p} punched in a disc at ${L[c]}${ROWS - a.r}.`;
+    }
     if (id === "gravity") { ev = { type: "gravity", prev: C.clone(g) }; C.flipGravity(g); note = `Player ${p} flipped gravity. Discs now fall ${C.up(g) ? "up" : "down"}.`; }
     if (id === "double") { g.charges[p] = { n: MAX_CHARGES, next: 0 }; ev = { type: "double" }; note = `Player ${p} refilled their drop charges.`; }
     g.ready[p][id] = now + CD[id] * mult(g);
@@ -190,6 +201,6 @@
     return false;
   }
 
-  const api = { MAX_CHARGES, chargesAt, GCD, gcdFree, CONTEST_MS, DROP_CD, MATCH_MS, TARGET, FREEZE_MS, CD, DESC, newGame, canDrop, drop, ability, tick, isReady, frozenFor };
+  const api = { POOL, MAX_CHARGES, chargesAt, GCD, gcdFree, CONTEST_MS, DROP_CD, MATCH_MS, TARGET, FREEZE_MS, CD, DESC, newGame, canDrop, drop, ability, tick, isReady, frozenFor };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.RT = api;
 })(typeof window !== "undefined" ? window : globalThis);

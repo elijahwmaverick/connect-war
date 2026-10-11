@@ -12,6 +12,7 @@
     flip:   { name: "Flip",        cost: 5, t: "col",  desc: "Invert one column top to bottom." },
     grenade:{ name: "Grenade",     cost: 3, t: "col",  desc: "Drop a grenade. After 2 seconds it explodes, destroying the discs directly above, below, left and right of it." },
     reinforce:{ name: "Reinforce", cost: 3, t: "col",  desc: "Slide your disc into the floor end of a column, pushing the stack away from the floor." },
+    punch:  { name: "Punch In",    cost: 0, t: "cell", only: "rt", desc: "Punch your disc into any cell that isn't an enemy disc. It can replace a stone, a fixed stone or a grenade." },
     gravity:{ name: "Gravity Flip", cost: 6, t: "none", desc: "Reverse gravity. All discs fly to the other side, and new discs come from there until it's flipped again." }
   };
   const opp = p => 3 - p;
@@ -177,13 +178,14 @@
   function validCell(g, id, r, c, sel) {
     if (!inB(r, c)) return false;
     if (id === "anchor") return g.grid[r][c] === g.cur && !g.anc[r][c];
+    if (id === "punch") return [0, 3, 4, FIXED].includes(g.grid[r][c]);
     if (id === "swap") return sel ? partner(g, sel[0], sel[1], r, c) : swapFirst(g, r, c);
     return false;
   }
   function hasTarget(g, id) {
     const t = AB[id].t;
     if (t === "col") { for (let c = 0; c < COLS; c++) if (validCol(g, id, c)) return true; return false; }
-    if (t === "own" || t === "pair") {
+    if (t === "own" || t === "pair" || t === "cell") {
       for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (validCell(g, id, r, c, null)) return true;
       return false;
     }

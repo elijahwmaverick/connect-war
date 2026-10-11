@@ -251,6 +251,13 @@ details ul{padding-left:18px;margin:8px 0 0}
 .disc.petrify,.disc.push{animation-delay:var(--ad,0s)}
 .dropbar.empty{border-color:var(--danger)}
 @media (prefers-reduced-motion:reduce){.disc.petrify,.disc.push{animation:none}}
+
+/* Punch In: the disc slams into place with a shockwave */
+.disc.punchin{animation:punchin .45s cubic-bezier(.2,1.4,.4,1);animation-delay:var(--ad,0s)}
+@keyframes punchin{0%{transform:scale(2.2);opacity:.2;filter:brightness(2.5)}55%{transform:scale(.88);opacity:1}100%{transform:none}}
+.shock{position:absolute;inset:-35%;border-radius:50%;border:3px solid var(--fg);pointer-events:none;z-index:3;opacity:0;animation:shock .5s ease-out;animation-delay:var(--ad,0s)}
+@keyframes shock{0%{transform:scale(.4);opacity:.9}100%{transform:scale(1.5);opacity:0}}
+@media (prefers-reduced-motion:reduce){.disc.punchin,.shock{animation:none}}
 </style>
 </head>
 <body>
