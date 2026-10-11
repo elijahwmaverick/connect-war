@@ -147,8 +147,9 @@ let rtTicker = null;
 function ensureRtTicker() {
   if (rtTicker) return;
   rtTicker = setInterval(() => {
-    if (!room || room.mode !== "rt" || !room.game || room.game.over) return;
-    if (RT.tick(room.game, Date.now())) publish();
+    if (!room || !room.game || room.game.over) return;
+    if (room.mode === "rt") { if (RT.tick(room.game, Date.now())) publish(); }
+    else if (CW.tickBombs(room.game, Date.now())) { if (room.game.over) { clearTimer(); room.deadline = null; } publish(); }
   }, 50);
 }
 function startMatch() {
@@ -160,6 +161,7 @@ function startMatch() {
     return;
   }
   room.game = CW.newGame(room.starter);
+  ensureRtTicker();
   room.votes = { rematch: [], redraft: [] };
   room.timerTurn = null; room.deadline = null; clearTimer();
   armTimer();
@@ -254,7 +256,8 @@ function resumeHost(c) {
   if (!room) return false;
   store("cw_room", c); store("cw_role", "host");
   openChannel(c, true);
-  if (room.mode === "rt") ensureRtTicker();
+  ensureRtTicker();
+  if (room.mode === "rt") {}
   else if (room.game && !room.game.over) { room.timerTurn = null; if (room.deadline) { const left = room.deadline - Date.now(); room.deadline = Date.now() + Math.max(1000, left); room.timerTurn = room.game.turnId; } armTimer(); }
   publish();
   return true;
@@ -328,7 +331,7 @@ function onView(v) {
   if (flip && flip.phase === 1) {
     busy = flip.type !== "clear"; render();
     const f = flip;
-    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : f.type === "clear" ? 820 : f.type === "gravity" ? 720 : 560);
+    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : f.type === "clear" ? (f.ev && f.ev.type === "boom" ? 520 : 820) : f.type === "gravity" ? 720 : 560);
   } else render();
 }
 
@@ -489,7 +492,8 @@ const PROMPT = {
   lift: () => "Lift: tap a column whose top disc is yours.",
   pop: () => "Pop: tap a column whose bottom disc is your opponent's.",
   swap: () => "Swap: tap a disc, then an adjacent disc of the other color.",
-  flip: () => "Flip: tap a column with 2 or more discs."
+  flip: () => "Flip: tap a column with 2 or more discs.",
+  grenade: () => "Grenade: tap a column to drop it. It explodes 2 seconds later."
 };
 
 function statusText() {
@@ -582,7 +586,7 @@ function renderPlay() {
         if (flip && flip.phase === 2 && (flip.type === "gravity" || (flip.type !== "clear" && flip.c === c))) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
         if (flip && flip.phase === 2 && flip.type === "clear") n = clearedFall(flip, r, c);
         if (flip && flip.phase === 1 && flip.type === "clear" && flip.ev && flip.ev.type === "drop" && at(flip.ev.r, flip.ev.c)) n = r + 1;
-        if (flip && flip.phase === 1 && flip.type === "clear" && cleared.has(r + "," + c)) { extra += " scored"; style += `--wd:${(0.25 + cleared.get(r + "," + c) * 0.06).toFixed(2)}s;`; }
+        if (flip && flip.phase === 1 && flip.type === "clear" && cleared.has(r + "," + c)) { extra += flip.ev && flip.ev.type === "boom" ? " boomed" : " scored"; style += `--wd:${(0.25 + cleared.get(r + "," + c) * 0.06).toFixed(2)}s;`; }
         if (n) { extra += " fall"; style = `--from:calc(${-n} * (116.3% + 3px));`; }
         if (flip && flip.phase === 1 && flip.type === "pop" && flip.c === c && r === ROWS - 1) extra += " burst";
         if (anim && anim.type === "anchor" && at(anim.r, anim.c)) extra += " anc-in";
@@ -592,10 +596,12 @@ function renderPlay() {
         }
         if (pend && pend.has(r + "," + c) && !(flip && flip.phase === 1)) extra += " pend";
         const lst = g.last && g.last.r === r && g.last.c === c && !g.over;
-        disc = `<div class="disc d${v} ${shown.anc[r][c] ? "anc" : ""}${extra} ${lst ? "last" : ""}" ${style ? `style="${style}"` : ""}></div>`;
+        if (v === 4) { const b = (g0.bombs || []).find(x => x.id === shown.anc[r][c]); if (b && b.until - now < 900) extra += " fuse-hot"; }
+        disc = `<div class="disc d${v} ${shown.anc[r][c] && v !== 4 ? "anc" : ""}${extra} ${lst ? "last" : ""}" ${style ? `style="${style}"` : ""}></div>`;
       } else if (anim && anim.type === "lift" && at(anim.r, anim.c)) {
         disc = `<div class="disc d${anim.v} lift-out"></div>`;
       }
+      if (flip && flip.phase === 1 && flip.ev && flip.ev.type === "boom" && at(flip.ev.r, flip.ev.c)) disc += `<div class="blast"></div>`;
       const wd = wi !== undefined ? `style="--wd:${(0.3 + wi * 0.15).toFixed(2)}s"` : "";
       cells += `<div class="${cc}" data-r="${r}" data-c="${c}" ${wd}>${disc}</div>`;
     }

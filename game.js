@@ -10,6 +10,7 @@
     swap:   { name: "Swap",        cost: 4, t: "pair", desc: "Swap two adjacent discs, one yours and one theirs." },
     double: { name: "Double Drop", cost: 4, t: "none", desc: "Drop a second disc in another column. It can't complete a 4." },
     flip:   { name: "Flip",        cost: 5, t: "col",  desc: "Invert one column top to bottom." },
+    grenade:{ name: "Grenade",     cost: 3, t: "col",  desc: "Drop a grenade. After 2 seconds it explodes, destroying the discs directly above, below, left and right of it." },
     gravity:{ name: "Gravity Flip", cost: 6, t: "none", desc: "Reverse gravity: every column turns upside down at once." }
   };
   const opp = p => 3 - p;
@@ -118,7 +119,7 @@
     if (c < 0 || c >= COLS) return false;
     const p = g.cur;
     switch (id) {
-      case "block": case "freeze": return topEmpty(g, c) >= 0;
+      case "block": case "freeze": case "grenade": return topEmpty(g, c) >= 0;
       case "lift": { const t = topDisc(g, c); return t >= 0 && g.grid[t][c] === p; }
       case "pop": return g.grid[ROWS - 1][c] === opp(p) && !g.anc[ROWS - 1][c];
       case "flip": return count(g, c) >= 2;
@@ -179,12 +180,49 @@
       ev = { type: "swap", r: a.r, c: a.c, r2: a.r2, c2: a.c2 };
       g.last = null; note = `Player ${p} swapped two discs.`;
     }
+    if (id === "grenade") { const r = topEmpty(g, c); placeGrenade(g, r, c, Date.now()); g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} dropped a grenade in ${L[c]}.`; }
     if (id === "gravity") { ev = { type: "gravity", prev: clone(g) }; for (let cc = 0; cc < COLS; cc++) writeStack(g, cc, stack(g, cc).reverse()); g.last = null; note = `Player ${p} flipped gravity.`; }
     if (id === "double") { g.dd = true; g.dropsLeft = 2; note = `Player ${p} used Double Drop.`; }
     g.ev = ev; g.seq++; g.note = note;
     if (resolve(g)) return null;
     if (!anyDrop(g)) { endTurn(g); g.note = note + ` Player ${p} has no open column, so the turn ends.` + g.note; }
     return null;
+  }
+
+  // Grenades sit on the board as value 4; their id rides in the anc slot so it moves with the disc.
+  const FUSE_MS = 2000;
+  function placeGrenade(g, r, c, now) {
+    g.bombSeq = (g.bombSeq || 0) + 1;
+    g.grid[r][c] = 4; g.anc[r][c] = g.bombSeq;
+    (g.bombs = g.bombs || []).push({ id: g.bombSeq, until: now + FUSE_MS });
+  }
+  // Explode one grenade: destroy it and its four orthogonal neighbours, then let the board settle.
+  function detonate(g, id) {
+    let at = null;
+    for (let r = 0; r < ROWS && !at; r++) for (let c = 0; c < COLS; c++) if (g.grid[r][c] === 4 && g.anc[r][c] === id) { at = [r, c]; break; }
+    g.bombs = (g.bombs || []).filter(b => b.id !== id);
+    if (!at) return null;
+    const [r, c] = at, prev = clone(g), cells = [r + "," + c];
+    for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const rr = r + dr, cc = c + dc;
+      if (inB(rr, cc) && g.grid[rr][cc] && g.grid[rr][cc] !== 4) cells.push(rr + "," + cc);
+    }
+    for (const k of cells) { const [a, b] = k.split(",").map(Number); g.grid[a][b] = 0; g.anc[a][b] = false; }
+    for (let cc = 0; cc < COLS; cc++) writeStack(g, cc, stack(g, cc));
+    g.last = null;
+    return { type: "boom", r, c, prev, clears: [{ p: 0, cells }] };
+  }
+  // Tactics: called by the host's ticker.
+  function tickBombs(g, now) {
+    if (g.over || !g.bombs || !g.bombs.length) return false;
+    const due = g.bombs.find(b => b.until <= now);
+    if (!due) return false;
+    const ev = detonate(g, due.id);
+    if (!ev) return false;
+    g.note = "A grenade exploded.";
+    g.ev = ev; g.seq++;
+    resolve(g);
+    return true;
   }
 
   function timeout(g) {
@@ -197,6 +235,6 @@
   }
 
   const api = { ROWS, COLS, MAXE, TURN_S, L, AB, opp, newGame, canDrop, drop, ability, timeout, validCol, validCell, hasTarget, abilityReady, count,
-    lines, topEmpty, topDisc, stack, writeStack, clone, partner, blank };
+    lines, topEmpty, topDisc, stack, writeStack, clone, partner, blank, placeGrenade, detonate, tickBombs, FUSE_MS };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.CW = api;
 })(typeof window !== "undefined" ? window : globalThis);
