@@ -363,7 +363,7 @@ setInterval(() => {
   if (key !== readyKey) { readyKey = key; if (!busy) render(); }
 }, 100);
 
-const header = extra => `<header class="top"><h1>Connect War</h1>${extra || ""}</header>`;
+const header = extra => `<header class="top"><h1>Connect War</h1><div class="hdr-right">${extra || ""}${V || code || isLocal ? `<button class="exit" data-act="leave" aria-label="Leave game">Exit</button>` : ""}</div></header>`;
 const you = p => (V && V.local ? `Player ${p}` : V && p === V.seat ? "You" : "Opponent");
 const localName = text => text; // local mode keeps "Player 1/2" wording
 
@@ -413,6 +413,8 @@ function renderHome() {
     <form class="field" id="joinForm" ${sb ? "" : "hidden"}><input id="code" maxlength="4" placeholder="CODE" autocomplete="off" aria-label="Game code" value="${waiting ? code : ""}"><button class="primary" type="submit">Join</button></form>
     <p class="err">${err}</p>
     ${waiting ? `<button class="ghost" data-act="leave">Cancel</button>` : ""}
+    ${!waiting && store("cw_room") && store("cw_room") !== "LOCAL" ? `<button class="ghost" data-act="rejoin">Rejoin game ${store("cw_room")}</button>` : ""}
+    <button class="linkbtn" data-act="reset">Stuck? Reset saved games</button>
   </section>`;
 }
 
@@ -710,6 +712,8 @@ app.addEventListener("click", e => {
     const a = actEl.dataset.act;
     if (a === "create") { err = ""; return createGame(); }
     if (a === "local") { err = ""; return createLocal(); }
+    if (a === "rejoin") { err = ""; return joinGame(store("cw_room")); }
+    if (a === "reset") { hardReset(); err = "Saved games cleared."; return render(); }
     if (a === "p2ready") { localHandoff = false; localSeat = 2; sel = []; return publish(); }
     if (a === "copy") {
       const txt = document.getElementById("link").textContent;
@@ -786,9 +790,14 @@ app.addEventListener("click", e => {
 });
 
 /* ================= start ================= */
+function hardReset() {
+  try { Object.keys(localStorage).filter(k => k.startsWith("cw_") && k !== "cw_token").forEach(k => localStorage.removeItem(k)); } catch (e) {}
+  leaveLocal();
+}
 (function boot() {
-  if (!sb) return render();
   const fromHash = location.hash.replace("#", "").trim().toUpperCase();
-  const c = fromHash || store("cw_room");
-  if (c && c.length === 4) joinGame(c); else render();
+  if (fromHash === "RESET") { hardReset(); return render(); }
+  if (!sb) return render();
+  // Only a link with a code joins automatically. A remembered game shows a Rejoin button instead.
+  if (fromHash.length === 4) joinGame(fromHash); else render();
 })();
