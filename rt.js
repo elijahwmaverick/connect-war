@@ -30,7 +30,7 @@
     return !g.over && c >= 0 && c < COLS && isReady(g, seat, "drop", now) && C.topEmpty(g, c) >= 0 && !frozenFor(g, seat, c, now);
   }
 
-  const CONTEST_MS = 250;
+  const CONTEST_MS = 500;
   function removeCells(g, cells) {
     for (const k of cells) { const [r, c] = k.split(",").map(Number); g.grid[r][c] = 0; g.anc[r][c] = false; }
     for (let c = 0; c < COLS; c++) C.writeStack(g, c, C.stack(g, c));
@@ -67,7 +67,7 @@
     const a = g.score[1], b = g.score[2];
     if (g.sudden && a !== b) finish(g, a > b ? 1 : 2);
     else if ((a >= TARGET || b >= TARGET) && a !== b) finish(g, a > b ? 1 : 2);
-    if (!g.over && !g.pending && g.grid[0].every(v => v)) {
+    if (!g.over && !g.pending && C.isFull(g)) {
       g.grid = C.blank(0); g.anc = C.blank(false); g.last = null; ev.wipe = true;
       g.note += " Board full, so it was wiped.";
     }
@@ -112,7 +112,7 @@
     if (id === "block") { const r = C.topEmpty(g, c); g.grid[r][c] = 3; g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} placed a stone in ${L[c]}.`; }
     if (id === "freeze") { g.frozen = g.frozen.filter(f => f.until > now); g.frozen.push({ col: c, player: opp(p), until: now + FREEZE_MS }); ev = { type: "freeze", c }; note = `Player ${p} froze column ${L[c]}.`; }
     if (id === "lift") { const t2 = C.topDisc(g, c); ev = { type: "lift", r: t2, c, v: g.grid[t2][c] }; g.grid[t2][c] = 0; g.anc[t2][c] = false; note = `Player ${p} lifted a disc from ${L[c]}.`; }
-    if (id === "pop") { ev = { type: "pop", c, prev: C.clone(g) }; g.grid[ROWS - 1][c] = 0; g.anc[ROWS - 1][c] = false; C.writeStack(g, c, C.stack(g, c)); g.last = null; note = `Player ${p} popped column ${L[c]}.`; }
+    if (id === "pop") { ev = { type: "pop", c, prev: C.clone(g) }; const f = C.floorRow(g); g.grid[f][c] = 0; g.anc[f][c] = false; C.writeStack(g, c, C.stack(g, c)); g.last = null; note = `Player ${p} popped column ${L[c]}.`; }
     if (id === "flip") { ev = { type: "flip", c, prev: C.clone(g) }; C.writeStack(g, c, C.stack(g, c).reverse()); g.last = null; note = `Player ${p} flipped column ${L[c]}.`; }
     if (id === "anchor") { g.anc[a.r][a.c] = true; ev = { type: "anchor", r: a.r, c: a.c }; note = `Player ${p} anchored a disc.`; }
     if (id === "swap") {
@@ -120,7 +120,7 @@
       ev = { type: "swap", r: a.r, c: a.c, r2: a.r2, c2: a.c2 }; g.last = null; note = `Player ${p} swapped two discs.`;
     }
     if (id === "grenade") { const r = C.topEmpty(g, c); C.placeGrenade(g, r, c, now); g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} dropped a grenade in ${L[c]}.`; }
-    if (id === "gravity") { ev = { type: "gravity", prev: C.clone(g) }; for (let cc = 0; cc < COLS; cc++) C.writeStack(g, cc, C.stack(g, cc).reverse()); g.last = null; note = `Player ${p} flipped gravity.`; }
+    if (id === "gravity") { ev = { type: "gravity", prev: C.clone(g) }; C.flipGravity(g); note = `Player ${p} flipped gravity. Discs now fall ${C.up(g) ? "up" : "down"}.`; }
     if (id === "double") { g.ready[p].drop = 0; ev = { type: "double" }; note = `Player ${p} reset their drop cooldown.`; }
     g.ready[p][id] = now + CD[id] * mult(g);
     g.ready[p].gcd = now + GCD;

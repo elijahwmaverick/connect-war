@@ -286,7 +286,17 @@ function leave() {
 /* ================= view + rendering ================= */
 let V = null, err = "", timerOn = true, sel = [];
 let mode = null, swapSel = null, localMsg = "";
-let lastSeq = -1, lastOver = false, showOver = false, anim = null, flip = null, busy = false;
+let lastSeq = -1, lastOver = false, showOver = false, flip = null, busy = false, confirmMenu = false;
+// Short animations in flight. Re-renders resume them part-way (negative animation-delay) instead of restarting or dropping them.
+let fx = [];
+const FX_MS = { drop: 450, freeze: 650, anchor: 550, swap: 500, lift: 600, double: 750 };
+const fxNow = () => performance.now();
+function fxFind(type, pred) {
+  const t = fxNow();
+  fx = fx.filter(f => t - f.start < (FX_MS[f.type] || 600));
+  const f = fx.find(f => f.type === type && (!pred || pred(f)));
+  return f ? { ...f, ad: `--ad:${-Math.round(t - f.start)}ms;` } : null;
+}
 let timeLeft = null, timeAt = 0;
 let gameMode = "rt", skew = 0, readyKey = "";
 const isRT = () => !!(V && V.mode === "rt");
@@ -305,7 +315,7 @@ function onView(v) {
         const t = g.ev.type;
         if (t === "flip" || t === "pop" || t === "gravity") flip = { type: t, c: g.ev.c, prev: g.ev.prev, phase: 1 };
         else if (g.ev.clears && g.ev.prev) flip = { type: "clear", prev: g.ev.prev, clears: g.ev.clears, phase: 1, ev: g.ev };
-        else anim = { ...g.ev, type: t === "block" ? "drop" : t };
+        else fx.push({ ...g.ev, type: t === "block" ? "drop" : t, start: fxNow() });
       }
       if (v.mode === "rt" && !g.over) {
         localMsg = "";
@@ -331,7 +341,7 @@ function onView(v) {
   if (flip && flip.phase === 1) {
     busy = flip.type !== "clear"; render();
     const f = flip;
-    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : f.type === "clear" ? (f.ev && f.ev.type === "boom" ? 520 : 820) : f.type === "gravity" ? 720 : 560);
+    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : f.type === "clear" ? (f.ev && f.ev.type === "boom" ? 520 : 820) : f.type === "gravity" ? 340 : 560);
   } else render();
 }
 
@@ -363,11 +373,20 @@ setInterval(() => {
   if (key !== readyKey) { readyKey = key; if (!busy) render(); }
 }, 100);
 
-const header = extra => `<header class="top"><h1>Connect War</h1><div class="hdr-right">${extra || ""}${V || code || isLocal ? `<button class="exit" data-act="leave" aria-label="Leave game">Exit</button>` : ""}</div></header>`;
+const header = extra => `<header class="top"><h1>Connect War</h1><div class="hdr-right">${extra || ""}${V || code || isLocal ? `<button class="exit" data-act="menu">Main menu</button>` : ""}</div></header>`;
+const menuModal = () => `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="mm-t"><div class="box">
+  <h2 id="mm-t">Leave this game?</h2>
+  <p class="muted">${V && V.phase === "play" && V.game && !V.game.over ? (isLocal ? "The match will end." : isHost ? "You're the host, so the match ends for both players." : "You'll leave the match. You can rejoin with the code.") : "You'll go back to the main menu."}</p>
+  <button class="primary" data-act="menu-yes">Leave to main menu</button>
+  <button class="ghost" data-act="menu-no">Stay</button></div></div>`;
 const you = p => (V && V.local ? `Player ${p}` : V && p === V.seat ? "You" : "Opponent");
 const localName = text => text; // local mode keeps "Player 1/2" wording
 
 function render() {
+  renderScreen();
+  if (confirmMenu) app.insertAdjacentHTML("beforeend", menuModal());
+}
+function renderScreen() {
   if (localHandoff) return renderHandoff();
   if (!V) return renderHome();
   if (V.phase === "lobby") return renderLobby();
@@ -492,7 +511,7 @@ const PROMPT = {
   freeze: () => "Freeze: tap a column to lock it for your opponent's next turn.",
   anchor: () => "Anchor: tap one of your discs.",
   lift: () => "Lift: tap a column whose top disc is yours.",
-  pop: () => "Pop: tap a column whose bottom disc is your opponent's.",
+  pop: () => `Pop: tap a column whose ${V && V.game && V.game.gdir === -1 ? "top" : "bottom"} disc is your opponent's.`,
   swap: () => "Swap: tap a disc, then an adjacent disc of the other color.",
   flip: () => "Flip: tap a column with 2 or more discs.",
   grenade: () => "Grenade: tap a column to drop it. It explodes 2 seconds later."
@@ -544,10 +563,11 @@ function overHtml() {
 
 // After fours are removed, discs that were above them fall by the number removed in that column.
 const gravCls = () => (flip && flip.phase === 1 && flip.type === "gravity" ? "grav1" : "");
-function clearedFall(f, r, c) {
-  let n = 0, maxRow = -1;
-  for (const grp of f.clears) for (const k of grp.cells) { const [rr, cc] = k.split(",").map(Number); if (cc === c) { n++; maxRow = Math.max(maxRow, rr); } }
-  return n && r <= maxRow ? n : 0;
+function clearedFall(f, r, c, gup) {
+  let n = 0, maxRow = -1, minRow = ROWS;
+  for (const grp of f.clears) for (const k of grp.cells) { const [rr, cc] = k.split(",").map(Number); if (cc === c) { n++; maxRow = Math.max(maxRow, rr); minRow = Math.min(minRow, rr); } }
+  if (!n) return 0;
+  return gup ? (r >= minRow - n ? n : 0) : (r <= maxRow ? n : 0);
 }
 
 function renderPlay() {
@@ -564,10 +584,14 @@ function renderPlay() {
   const mt = mode ? AB[mode].t : null;
   const wins = new Map(g.over && !(flip && flip.phase === 1) ? g.win.map((k, i) => [k, i]) : []);
   let cols = "";
+  const gup = g.gdir === -1;
+  // Disc motion toward the current floor: falls when gravity is down, rises when it is up.
+  const motion = n => (gup ? [" rise", `--from:calc(${n} * (116.3% + 3px));`] : [" fall", `--from:calc(${-n} * (116.3% + 3px));`]);
   for (let c = 0; c < COLS; c++) {
-    let cls = "col";
+    let cls = "col", colStyle = "";
     if (flip && flip.phase === 1 && flip.type === "flip" && flip.c === c) cls += " flip1";
-    if (anim && anim.type === "freeze" && anim.c === c) cls += " frz-in";
+    const fz = fxFind("freeze", f => f.c === c);
+    if (fz) { cls += " frz-in"; colStyle = fz.ad; }
     if (myTurn) {
       if (mt === "col" && CW.validCol(g, mode, c)) cls += " tgt";
       else if (!mode && !(rt && V.local) && canDropCol(c)) cls += " can";
@@ -584,33 +608,38 @@ function renderPlay() {
       const at = (rr, cc2) => rr === r && cc2 === c;
       if (v) {
         let n = 0, extra = "", style = "";
-        if (anim && anim.type === "drop" && at(anim.r, anim.c)) n = r + 1;
+        const dfx = fxFind("drop", f => at(f.r, f.c));
+        if (dfx) { n = gup ? ROWS - r : r + 1; style += dfx.ad; }
         if (flip && flip.phase === 2 && (flip.type === "gravity" || (flip.type !== "clear" && flip.c === c))) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
-        if (flip && flip.phase === 2 && flip.type === "clear") n = clearedFall(flip, r, c);
-        if (flip && flip.phase === 1 && flip.type === "clear" && flip.ev && flip.ev.type === "drop" && at(flip.ev.r, flip.ev.c)) n = r + 1;
+        if (flip && flip.phase === 2 && flip.type === "clear") n = clearedFall(flip, r, c, gup);
+        if (flip && flip.phase === 1 && flip.type === "clear" && flip.ev && flip.ev.type === "drop" && at(flip.ev.r, flip.ev.c)) n = gup ? ROWS - r : r + 1;
         if (flip && flip.phase === 1 && flip.type === "clear" && cleared.has(r + "," + c)) { extra += flip.ev && flip.ev.type === "boom" ? " boomed" : " scored"; style += `--wd:${(0.25 + cleared.get(r + "," + c) * 0.06).toFixed(2)}s;`; }
-        if (n) { extra += " fall"; style = `--from:calc(${-n} * (116.3% + 3px));`; }
-        if (flip && flip.phase === 1 && flip.type === "pop" && flip.c === c && r === ROWS - 1) extra += " burst";
-        if (anim && anim.type === "anchor" && at(anim.r, anim.c)) extra += " anc-in";
-        if (anim && anim.type === "swap") {
-          const from = at(anim.r, anim.c) ? [anim.r2, anim.c2] : at(anim.r2, anim.c2) ? [anim.r, anim.c] : null;
-          if (from) { extra += " slide"; style += `--sx:calc(${from[1] - c} * (116.3% + 7px));--sy:calc(${from[0] - r} * (116.3% + 3px));`; }
+        if (n) { const [k, st] = motion(n); extra += k; style += st; }
+        const popFloor = (flip && flip.prev && flip.prev.gdir === -1) || (!flip && gup) ? 0 : ROWS - 1;
+        if (flip && flip.phase === 1 && flip.type === "pop" && flip.c === c && r === popFloor) extra += " burst";
+        const afx = fxFind("anchor", f => at(f.r, f.c));
+        if (afx) { extra += " anc-in"; style += afx.ad; }
+        const sfx = fxFind("swap", f => at(f.r, f.c) || at(f.r2, f.c2));
+        if (sfx) {
+          const from = at(sfx.r, sfx.c) ? [sfx.r2, sfx.c2] : [sfx.r, sfx.c];
+          extra += " slide"; style += sfx.ad + `--sx:calc(${from[1] - c} * (116.3% + 7px));--sy:calc(${from[0] - r} * (116.3% + 3px));`;
         }
         if (pend && pend.has(r + "," + c) && !(flip && flip.phase === 1)) extra += " pend";
         const lst = g.last && g.last.r === r && g.last.c === c && !g.over;
         if (v === 4) { const b = (g0.bombs || []).find(x => x.id === shown.anc[r][c]); if (b && b.until - now < 900) extra += " fuse-hot"; }
         disc = `<div class="disc d${v} ${shown.anc[r][c] && v !== 4 ? "anc" : ""}${extra} ${lst ? "last" : ""}" ${style ? `style="${style}"` : ""}></div>`;
-      } else if (anim && anim.type === "lift" && at(anim.r, anim.c)) {
-        disc = `<div class="disc d${anim.v} lift-out"></div>`;
+      } else {
+        const lfx = fxFind("lift", f => at(f.r, f.c));
+        if (lfx) disc = `<div class="disc d${lfx.v} lift-out${gup ? " down" : ""}" style="${lfx.ad}"></div>`;
       }
       if (flip && flip.phase === 1 && flip.ev && flip.ev.type === "boom" && at(flip.ev.r, flip.ev.c)) disc += `<div class="blast"></div>`;
       const wd = wi !== undefined ? `style="--wd:${(0.3 + wi * 0.15).toFixed(2)}s"` : "";
       cells += `<div class="${cc}" data-r="${r}" data-c="${c}" ${wd}>${disc}</div>`;
     }
-    cols += `<div class="${cls}" role="button" aria-label="Column ${L[c]}">${cells}</div>`;
+    cols += `<div class="${cls}" ${colStyle ? `style="${colStyle}"` : ""} role="button" aria-label="Column ${L[c]}">${cells}</div>`;
   }
-  const ddFlash = anim && anim.type === "double";
-  anim = null;
+  const dd = fxFind("double");
+  const ddFlash = dd ? `dd-flash" style="${dd.ad}` : "";
   const mine = V.myPicks || [];
   const trayRT = () => `<div class="dropbar" data-cd="drop"><i></i><span class="cdt">${RT.isReady(g, V.seat, "drop", now) ? "Drop ready" : ""}</span></div>
   <div class="tray">${mine.map(id => {
@@ -636,14 +665,15 @@ function renderPlay() {
   ${dc}
   <div class="players">${panel(V.seat)}${panel(opp(V.seat))}</div>
   <p class="status" aria-live="polite">${statusText()}</p>
-  <div class="board-wrap"><div class="board ${!rt && g.over && g.result && !(flip && flip.phase === 1) ? "won" : ""} ${ddFlash ? "dd-flash" : ""} ${gravCls()}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${flip && flip.type === "clear" && flip.ev && flip.ev.contested ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>
+  <div class="board-wrap"><div class="board ${!rt && g.over && g.result && !(flip && flip.phase === 1) ? "won" : ""} ${gravCls()} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${flip && flip.type === "clear" && flip.ev && flip.ev.contested ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>
   <div class="letters">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
+  ${g.gdir === -1 ? `<div class="gravtag">Gravity is up: discs rise from the bottom</div>` : ""}
   ${tray}
   <p class="err">${err}</p>
   ${rt ? `<details><summary>Rules</summary><ul>
     <li>No turns. Drop whenever your 2.5s drop cooldown is ready. Each ability has its own cooldown. Any action also starts a 0.15s global cooldown.</li>
     <li>Each four scores 1 point; those discs are removed and the column falls.</li>
-    <li>Contested: after a four, your opponent has 0.25s to make their own four. If they do, both cancel.</li>
+    <li>Contested: after a four, your opponent has 0.5s to make their own four. If they do, both cancel.</li>
     <li>First to 5 wins. After 5 minutes the higher score wins. A tie goes to sudden death: cooldowns ×¼, next score wins.</li>
     <li>A full board with no four is wiped.</li></ul></details>` : `<details><summary>Rules</summary><ul>
     <li>Connect 4 in a row on an 8×7 board.</li>
@@ -676,8 +706,8 @@ function renderTabletop({ g, g0, now, cols, pend, ddFlash }) {
   const status = mode ? `<b class="c${modeSeat}">Player ${modeSeat}</b> · ${statusText()}` : statusText();
   app.innerHTML = `${header(`<div class="timer mclock ${g0.sudden ? "warn" : ""}"><span id="mclock">${g0.sudden ? "SUDDEN DEATH" : fmtClock(g0.endsAt - now)}</span></div>`)}
   ${side(2)}
-  <p class="status tabletop-status" aria-live="polite">${status}</p>
-  <div class="board-wrap"><div class="board ${ddFlash ? "dd-flash" : ""} ${gravCls()}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${flip && flip.type === "clear" && flip.ev && flip.ev.contested ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g0.over && showOver ? overHtml() : ""}</div>
+  <p class="status tabletop-status" aria-live="polite">${status}${g0.gdir === -1 ? ` <span class="gravtag inline">Gravity up</span>` : ""}</p>
+  <div class="board-wrap"><div class="board ${gravCls()} ${g0.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${flip && flip.type === "clear" && flip.ev && flip.ev.contested ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g0.over && showOver ? overHtml() : ""}</div>
   ${side(1)}
   ${g0.over ? `<button class="ghost" data-act="leave">Leave game</button>` : ""}`;
 }
@@ -712,6 +742,9 @@ app.addEventListener("click", e => {
     const a = actEl.dataset.act;
     if (a === "create") { err = ""; return createGame(); }
     if (a === "local") { err = ""; return createLocal(); }
+    if (a === "menu") { confirmMenu = true; return app.insertAdjacentHTML("beforeend", menuModal()); }
+    if (a === "menu-no") { confirmMenu = false; const m = app.querySelector(".modal"); if (m) m.remove(); return; }
+    if (a === "menu-yes") { confirmMenu = false; err = ""; return leave(); }
     if (a === "rejoin") { err = ""; return joinGame(store("cw_room")); }
     if (a === "reset") { hardReset(); err = "Saved games cleared."; return render(); }
     if (a === "p2ready") { localHandoff = false; localSeat = 2; sel = []; return publish(); }

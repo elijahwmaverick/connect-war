@@ -197,7 +197,6 @@ details ul{padding-left:18px;margin:8px 0 0}
 .tabletop-status{min-height:1.4em;text-align:center;font-size:14px}
 
 /* Gravity Flip: the whole board turns over, then discs fall */
-.board.grav1{animation:gravflip .7s cubic-bezier(.6,0,.4,1) forwards;box-shadow:inset 0 -5px 0 var(--board-edge),0 0 0 3px var(--gold),0 0 26px 6px rgba(242,193,78,.45)}
 @keyframes gravflip{0%{transform:perspective(900px) rotateX(0)}100%{transform:perspective(900px) rotateX(180deg)}}
 @media (prefers-reduced-motion:reduce){.board.grav1{animation:none}}
 
@@ -218,6 +217,28 @@ details ul{padding-left:18px;margin:8px 0 0}
 .hdr-right{display:flex;align-items:center;gap:10px}
 .exit{background:transparent;border:1px solid var(--line);border-radius:8px;padding:5px 10px;font-family:var(--fd);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);cursor:pointer}
 .linkbtn{background:none;border:0;color:var(--muted);text-decoration:underline;font-size:13px;cursor:pointer;align-self:center}
+
+/* Rising discs (gravity up) mirror the fall */
+.rise{animation:rise .42s linear}
+@keyframes rise{
+  0%{transform:translateY(var(--from));animation-timing-function:cubic-bezier(.5,0,.9,.6)}
+  70%{transform:translateY(0) scale(1.06,.9);animation-timing-function:ease-out}
+  85%{transform:translateY(8%) scale(.98,1.03);animation-timing-function:ease-in}
+  100%{transform:none}}
+.lift-out.down{animation-name:liftdown}
+@keyframes liftdown{20%{transform:scale(1.1)}100%{transform:translateY(320%) scale(.8);opacity:0}}
+/* Gravity flip: the board shudders before the discs fly */
+.board.grav1{animation:gravshake .34s ease-in-out;box-shadow:inset 0 -5px 0 var(--board-edge),0 0 0 3px var(--gold),0 0 26px 6px rgba(242,193,78,.45)}
+@keyframes gravshake{0%,100%{transform:none}20%{transform:translateY(-2%)}40%{transform:translateY(2%)}60%{transform:translateY(-1.5%)}80%{transform:translateY(1%)}}
+.board.up{box-shadow:inset 0 5px 0 var(--board-edge),0 0 0 2px rgba(242,193,78,.35)}
+.gravtag{font-family:var(--fd);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);text-align:center}
+.gravtag.inline{display:inline;margin-left:6px}
+/* Animations resumed part-way after a re-render */
+.fall,.rise,.slide,.lift-out,.anc-in,.anc-in::after,.col.frz-in::after,.board.dd-flash{animation-delay:var(--ad,0s)}
+/* Main menu confirm */
+.modal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(8,10,14,.7);padding-inline:16px}
+.modal .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:10px;width:min(320px,100%);text-align:center}
+@media (prefers-reduced-motion:reduce){.rise,.board.grav1{animation:none}}
 </style>
 </head>
 <body>

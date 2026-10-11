@@ -36,7 +36,7 @@ If you've turned on **Realtime → Settings → "Allow public access" = off** (p
 
 ## Game modes
 
-- **Connect War** (default): real time, no turns. Drops have a 2.5s cooldown and each ability its own cooldown, plus a 0.15s global cooldown after any action. Each four scores a point (those discs are removed). A four can be Contested: if the opponent makes a four within 0.25s, both cancel. First to 5, or the higher score after 5 minutes; a tie goes to sudden death with cooldowns cut to 1/4.
+- **Connect War** (default): real time, no turns. Drops have a 2.5s cooldown and each ability its own cooldown, plus a 0.15s global cooldown after any action. Each four scores a point (those discs are removed). A four can be Contested: if the opponent makes a four within 0.5s, both cancel. First to 5, or the higher score after 5 minutes; a tie goes to sudden death with cooldowns cut to 1/4.
 - **Connect War: Tactics**: turn based with energy. One four wins.
 
 ## 3. Play
