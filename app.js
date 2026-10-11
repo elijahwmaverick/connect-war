@@ -80,18 +80,32 @@ function sayHello() {
 
 /* ================= host: authoritative room ================= */
 let room = null, hostTimer = null;
+// Local play: both seats on this device, no network.
+let isLocal = false, localSeat = 1, localHandoff = false, modeSeat = 1;
+function localViewSeat() {
+  if (room.phase === "play" && room.game && room.mode !== "rt") return room.game.over ? localSeat : room.game.cur;
+  return room.phase === "play" && room.mode === "rt" ? 1 : localSeat;
+}
+function createLocal() {
+  closeChannel();
+  room = newRoom("LOCAL", timerOn, gameMode);
+  room.guest = "local"; room.phase = "draft";
+  isHost = true; isLocal = true; localSeat = 1; localHandoff = false; peerOnline = true; code = null;
+  sel = []; V = null; lastSeq = -1;
+  publish();
+}
 
 function newRoom(c, timerOn, mode) {
   return { code: c, mode: mode === "tactics" ? "tactics" : "rt", guest: null, phase: "lobby", picks: { 1: null, 2: null }, starter: 1, game: null,
     timerOn: !!timerOn, deadline: null, timerTurn: null, votes: { rematch: [], redraft: [] } };
 }
-function saveRoom() { if (room) store("cw_host_" + room.code, JSON.stringify(room)); }
+function saveRoom() { if (room && !isLocal) store("cw_host_" + room.code, JSON.stringify(room)); }
 
 function view(seat) {
   const other = opp(seat);
   const both = !!(room.picks[1] && room.picks[2]);
   return {
-    code: room.code, mode: room.mode || "tactics", hostNow: Date.now(), seat, phase: room.phase, timerOn: room.timerOn,
+    code: room.code, local: isLocal, mode: room.mode || "tactics", hostNow: Date.now(), seat, phase: room.phase, timerOn: room.timerOn,
     opponentJoined: seat === 1 ? !!room.guest : true,
     opponentConnected: seat === 1 ? peerOnline : true,
     myPicks: room.picks[seat], oppLocked: !!room.picks[other], oppPicks: both ? room.picks[other] : null,
@@ -103,6 +117,10 @@ function view(seat) {
 function publish() {
   if (!room) return;
   saveRoom();
+  if (isLocal) {
+    if (room.phase === "play" && room.game && room.mode !== "rt" && !room.game.over) localSeat = room.game.cur;
+    return onView(JSON.parse(JSON.stringify(view(localViewSeat()))));
+  }
   if (room.guest) send("state", { to: room.guest, view: view(2) });
   onView(JSON.parse(JSON.stringify(view(1))));
 }
@@ -207,7 +225,12 @@ function hostAction(msg) {
 /* ================= actions from this device ================= */
 function act(type, p, cb) {
   if (isHost) {
-    const e = handle(1, type, p);
+    let seat = 1;
+    if (isLocal) {
+      if (type === "vote") { handle(1, type, p); handle(2, type, p); if (room.phase === "draft") { localSeat = 1; localHandoff = false; sel = []; } cb && cb({ ok: true }); return publish(); }
+      seat = (p && p.__seat) || (room.phase === "play" && room.mode !== "rt" && room.game ? room.game.cur : localSeat);
+    }
+    const e = handle(seat, type, p);
     cb && cb(e ? { error: e } : { ok: true });
     if (!e) publish();
     return;
@@ -245,7 +268,7 @@ function joinGame(c) {
   openChannel(c, false);
 }
 function leaveLocal() {
-  closeChannel();
+  closeChannel(); isLocal = false; localHandoff = false;
   if (isHost && room) store("cw_host_" + room.code, null);
   clearTimer(); room = null; isHost = false; code = null; V = null;
   store("cw_room", null); store("cw_role", null);
@@ -253,8 +276,8 @@ function leaveLocal() {
   sel = []; mode = null; lastSeq = -1;
 }
 function leave() {
-  if (isHost) send("closed", {});
-  setTimeout(() => { leaveLocal(); render(); }, isHost ? 150 : 0);
+  if (isHost && !isLocal) send("closed", {});
+  setTimeout(() => { leaveLocal(); render(); }, isHost && !isLocal ? 150 : 0);
 }
 
 /* ================= view + rendering ================= */
@@ -283,7 +306,7 @@ function onView(v) {
       }
       if (v.mode === "rt" && !g.over) {
         localMsg = "";
-        if (swapSel && !CW.validCell({ ...g, cur: v.seat }, "swap", swapSel[0], swapSel[1], null)) swapSel = null;
+        if (swapSel && !CW.validCell({ ...g, cur: v.local ? modeSeat : v.seat }, "swap", swapSel[0], swapSel[1], null)) swapSel = null;
       } else { mode = null; swapSel = null; localMsg = ""; }
       if (g.over && !lastOver) {
         showOver = lastSeq === -1;
@@ -322,24 +345,27 @@ setInterval(() => {
 setInterval(() => {
   if (!isRT() || V.phase !== "play" || !V.game) return;
   const g = V.game, now = hostNow(), mine = g.ready[V.seat] || {};
+  const rdy = seat => g.ready[seat] || {};
   const ck = document.getElementById("mclock");
   if (ck) ck.textContent = g.sudden ? "SUDDEN DEATH" : fmtClock(g.endsAt - now);
   if (ck) ck.parentElement.classList.toggle("warn", !g.sudden && g.endsAt - now < 30000);
   document.querySelectorAll("[data-cd]").forEach(el => {
     const k = el.dataset.cd, total = (k === "drop" ? RT.DROP_CD : RT.CD[k]) * (g.sudden ? 0.25 : 1);
-    const rem = Math.max(0, (mine[k] || 0) - now);
+    const rem = Math.max(0, (rdy(el.dataset.seat || V.seat)[k] || 0) - now);
     el.style.setProperty("--p", Math.min(1, rem / total));
     const t = el.querySelector(".cdt"); if (t) t.textContent = rem ? (rem / 1000).toFixed(1) + "s" : (k === "drop" ? "Drop ready" : "Ready");
   });
-  const key = ["drop", ...(V.myPicks || [])].map(k => (mine[k] || 0) <= now ? 1 : 0).join("") + g.frozen.filter(f => f.until > now).length + (g.pending && g.pending.until > now ? "p" : "");
+  const seats = V.local ? [1, 2] : [V.seat];
+  const key = seats.map(st => ["gcd", "drop", ...((st === V.seat ? V.myPicks : V.oppPicks) || [])].map(k => (rdy(st)[k] || 0) <= now ? 1 : 0).join("")).join("|") + g.frozen.filter(f => f.until > now).length + (g.pending && g.pending.until > now ? "p" : "");
   if (key !== readyKey) { readyKey = key; if (!busy) render(); }
 }, 100);
 
 const header = extra => `<header class="top"><h1>Connect War</h1>${extra || ""}</header>`;
-const you = p => V && p === V.seat ? "You" : "Opponent";
+const you = p => (V && V.local ? `Player ${p}` : V && p === V.seat ? "You" : "Opponent");
+const localName = text => text; // local mode keeps "Player 1/2" wording
 
 function render() {
-  if (!sb) return renderSetupNeeded();
+  if (localHandoff) return renderHandoff();
   if (!V) return renderHome();
   if (V.phase === "lobby") return renderLobby();
   if (V.phase === "draft") return renderDraft();
@@ -354,20 +380,34 @@ function renderSetupNeeded() {
   </section>`;
 }
 
+function renderHandoff() {
+  app.innerHTML = `${header()}
+  <section class="handoff">
+    <div class="eyebrow c1">Player 1 locked in</div>
+    <h2>Pass the phone to Player 2</h2>
+    <p class="muted">Player 1, look away while Player 2 picks.</p>
+    <button class="primary" data-act="p2ready">I'm Player 2</button>
+  </section>`;
+}
+
 function renderHome() {
   const waiting = code && !isHost;
   app.innerHTML = `${header()}
   <section class="setup">
-    <h2>Play online</h2>
-    <p class="muted">Create a game and send the code or link to your opponent. Keep this page open while you host.</p>
+    <h2>New game</h2>
     <div class="modes">
       <button class="mode ${gameMode === "rt" ? "on" : ""}" data-mode="rt" aria-pressed="${gameMode === "rt"}"><span class="cn">Connect War</span><span class="cd">Real time. No turns: drops and abilities run on cooldowns. First to 5 fours in 5 minutes.</span></button>
       <button class="mode ${gameMode === "tactics" ? "on" : ""}" data-mode="tactics" aria-pressed="${gameMode === "tactics"}"><span class="cn">Connect War: Tactics</span><span class="cd">Turn based with energy. One four wins.</span></button>
     </div>
     ${gameMode === "tactics" ? `<label class="tog"><input type="checkbox" id="timerOn" ${timerOn ? "checked" : ""}> 20-second turn clock</label>` : ""}
-    <button class="primary" data-act="create">Create game</button>
-    <div class="divider">OR</div>
-    <form class="field" id="joinForm"><input id="code" maxlength="4" placeholder="CODE" autocomplete="off" aria-label="Game code" value="${waiting ? code : ""}"><button class="primary" type="submit">Join</button></form>
+    <div class="row2">
+      <button class="primary" data-act="create" ${sb ? "" : "disabled"}>Play online</button>
+      <button class="ghost strong" data-act="local">Play local</button>
+    </div>
+    <p class="muted small">Online: send your opponent a code. Local: two players on this phone${gameMode === "rt" ? ", one at each end" : ", passing it between turns"}.</p>
+    ${sb ? "" : `<p class="err">Online play is unavailable: the game server didn't load. Local play still works.</p>`}
+    <div class="divider">JOIN A GAME</div>
+    <form class="field" id="joinForm" ${sb ? "" : "hidden"}><input id="code" maxlength="4" placeholder="CODE" autocomplete="off" aria-label="Game code" value="${waiting ? code : ""}"><button class="primary" type="submit">Join</button></form>
     <p class="err">${err}</p>
     ${waiting ? `<button class="ghost" data-act="leave">Cancel</button>` : ""}
   </section>`;
@@ -404,9 +444,9 @@ function renderDraft() {
   }
   app.innerHTML = `${header()}
   <section class="setup" data-p="${p}">
-    <div class="eyebrow c${p}">${modeName()} · You are Player ${p}</div>
-    <h2>Pick 3 abilities</h2>
-    <p class="muted">Your opponent can't see your picks until both of you lock in. ${V.oppLocked ? "Your opponent has locked in." : ""}</p>
+    <div class="eyebrow c${p}">${modeName()} · ${V.local ? "Local · " : ""}${V.local ? "" : "You are "}Player ${p}</div>
+    <h2>${V.local ? `Player ${p}: pick 3 abilities` : "Pick 3 abilities"}</h2>
+    <p class="muted">${V.local ? (p === 1 ? "Player 2, look away. Picks stay hidden until the match starts." : "Player 1, look away.") : `Your opponent can't see your picks until both of you lock in. ${V.oppLocked ? "Your opponent has locked in." : ""}`}</p>
     ${dc}
     <div class="cards">${Object.entries(AB).map(([id, a]) => `<button class="card ${sel.includes(id) ? "on" : ""}" data-pick="${id}" aria-pressed="${sel.includes(id)}">
       <span class="cn">${a.name}</span><span class="cost">${costLabel(id)}</span><span class="cd">${descOf(id)}</span></button>`).join("")}</div>
@@ -456,13 +496,22 @@ function statusText() {
   const g = V.game;
   if (localMsg) return localMsg;
   if (isRT()) {
+    if (g.over && V.local) return `Player ${g.result} wins ${g.score[g.result]}–${g.score[opp(g.result)]}.`;
     if (g.over) return g.result === V.seat ? `You win ${g.score[V.seat]}–${g.score[opp(V.seat)]}.` : `You lose ${g.score[V.seat]}–${g.score[opp(V.seat)]}.`;
     if (mode) return (mode === "freeze" ? "Freeze: tap a column to lock it for your opponent for 5 seconds." : PROMPT[mode]());
-    const nt = g.note ? g.note.replace(new RegExp(`Player ${V.seat}`, "g"), "You").replace(new RegExp(`Player ${opp(V.seat)}`, "g"), "Opponent") : "";
+    const nt = V.local ? g.note : g.note ? g.note.replace(new RegExp(`Player ${V.seat}`, "g"), "You").replace(new RegExp(`Player ${opp(V.seat)}`, "g"), "Opponent") : "";
     return (g.sudden ? "<b>Sudden death</b>: next score wins. " : "") + (nt || "Go! Drop discs as fast as your cooldowns allow.");
   }
+  if (g.over && V.local) return g.result ? `Player ${g.result} connects four.` : "Board full. Draw.";
   if (g.over) return g.result ? (g.result === V.seat ? "You connect four." : "Your opponent connects four.") : "Board full. Draw.";
   if (mode) return PROMPT[mode]();
+  if (V.local) {
+    const who = `<b class="c${g.cur}">Player ${g.cur}</b>`;
+    const nl = g.note ? g.note + " " : "";
+    if (g.dd && g.dropsMade === 1) return nl + who + ": place your second disc in a different column. It can't complete a 4.";
+    if (g.abilityUsed && g.dropsMade === 0 && !g.dd) return nl + who + ": now drop a disc.";
+    return nl + who + ": drop a disc, or use an ability first.";
+  }
   const note = g.note ? g.note.replace(new RegExp(`Player ${V.seat}`, "g"), "You").replace(new RegExp(`Player ${opp(V.seat)}`, "g"), "Opponent") + " " : "";
   if (g.cur === V.seat) {
     if (g.dd && g.dropsMade === 1) return note + "Place your second disc in a different column. It can't complete a 4.";
@@ -475,15 +524,15 @@ function statusText() {
 function overHtml() {
   const g = V.game, other = opp(V.seat);
   const r = V.votes.rematch, d = V.votes.redraft;
-  const title = g.result ? (g.result === V.seat ? "You win" : "You lose") : "Draw";
+  const title = g.result ? (V.local ? `Player ${g.result} wins` : g.result === V.seat ? "You win" : "You lose") : "Draw";
   const sub = r.includes(other) ? "Your opponent wants a rematch." : d.includes(other) ? "Your opponent wants new loadouts." : "";
   return `<div class="over"><div class="box">
     <div class="eyebrow ${g.result ? "c" + g.result : ""}">Match over</div>
     <h2>${title}</h2>
-    ${isRT() ? `<p class="muted">${g.score[V.seat]}–${g.score[other]}${g.sudden ? " in sudden death" : ""}</p>` : ""}
+    ${isRT() ? `<p class="muted">${V.local ? `Player 1 ${g.score[1]} – ${g.score[2]} Player 2` : `${g.score[V.seat]}–${g.score[other]}`}${g.sudden ? " in sudden death" : ""}</p>` : ""}
     ${sub ? `<p class="muted">${sub}</p>` : ""}
-    <button class="primary" data-act="rematch" ${r.includes(V.seat) ? "disabled" : ""}>${r.includes(V.seat) ? "Waiting for opponent" : "Rematch"}</button>
-    <button class="ghost" data-act="redraft" ${d.includes(V.seat) ? "disabled" : ""}>${d.includes(V.seat) ? "Waiting for opponent" : "New loadouts"}</button>
+    <button class="primary" data-act="rematch" ${r.includes(V.seat) && !V.local ? "disabled" : ""}>${r.includes(V.seat) ? "Waiting for opponent" : "Rematch"}</button>
+    <button class="ghost" data-act="redraft" ${d.includes(V.seat) && !V.local ? "disabled" : ""}>${d.includes(V.seat) ? "Waiting for opponent" : "New loadouts"}</button>
     <button class="ghost" data-act="leave">Leave game</button></div></div>`;
 }
 
@@ -496,7 +545,7 @@ function clearedFall(f, r, c) {
 
 function renderPlay() {
   const rt = isRT(), now = hostNow();
-  const g0 = V.game, g = rt ? { ...g0, cur: V.seat } : g0;
+  const g0 = V.game, g = rt ? { ...g0, cur: V.local ? modeSeat : V.seat } : g0;
   const myTurn = rt ? !g.over && !busy : g.cur === V.seat && !g.over && !busy;
   const canDropCol = c => (rt ? RT.canDrop(g, V.seat, c, now) : CW.canDrop(g, c));
   const shown = flip && flip.phase === 1 ? { ...g, grid: flip.prev.grid, anc: flip.prev.anc } : g;
@@ -514,7 +563,7 @@ function renderPlay() {
     if (anim && anim.type === "freeze" && anim.c === c) cls += " frz-in";
     if (myTurn) {
       if (mt === "col" && CW.validCol(g, mode, c)) cls += " tgt";
-      else if (!mode && canDropCol(c)) cls += " can";
+      else if (!mode && !(rt && V.local) && canDropCol(c)) cls += " can";
     }
     if (!g.over && (rt ? g.frozen.some(f => f.col === c && f.until > now) : g.frozen && g.frozen.col === c)) cls += " frz";
     let cells = "";
@@ -571,6 +620,7 @@ function renderPlay() {
     : V.timerOn
     ? `<div class="timer ${tl != null && tl <= 5 ? "warn" : ""}"><div class="tbar"><i id="tfill" style="width:${tl == null ? 0 : tl / TURN_S * 100}%"></i></div><span id="tnum">${tl == null ? "–" : tl + "s"}</span></div>`
     : `<div class="timer off"><span>No clock</span></div>`;
+  if (rt && V.local) return renderTabletop({ g, g0, now, cols, pend, ddFlash });
   const dc = !V.opponentConnected
     ? `<div class="banner">${isHost ? `Your opponent is disconnected. They can rejoin with code ${V.code}.` : "The host is disconnected. The game resumes when they reopen it."}</div>` : "";
   app.innerHTML = `${header(timer)}
@@ -582,7 +632,7 @@ function renderPlay() {
   ${tray}
   <p class="err">${err}</p>
   ${rt ? `<details><summary>Rules</summary><ul>
-    <li>No turns. Drop whenever your 2.5s drop cooldown is ready. Each ability has its own cooldown.</li>
+    <li>No turns. Drop whenever your 2.5s drop cooldown is ready. Each ability has its own cooldown. Any action also starts a 0.15s global cooldown.</li>
     <li>Each four scores 1 point; those discs are removed and the column falls.</li>
     <li>Contested: after a four, your opponent has 0.25s to make their own four. If they do, both cancel.</li>
     <li>First to 5 wins. After 5 minutes the higher score wins. A tie goes to sudden death: cooldowns ×¼, next score wins.</li>
@@ -595,8 +645,37 @@ function renderPlay() {
     <li>Rematch swaps who goes first.</li></ul></details>`}`;
 }
 
+// Real-time local: Player 2's controls at the top (turned to face them), Player 1's at the bottom.
+function renderTabletop({ g, g0, now, cols, pend, ddFlash }) {
+  const side = st => {
+    const picks = (st === V.seat ? V.myPicks : V.oppPicks) || [];
+    const s = g0.score[st], fz = frozenCols(g0, st);
+    const order = st === 2 ? [...Array(COLS).keys()].reverse() : [...Array(COLS).keys()];
+    return `<section class="side ${st === 2 ? "flipside" : ""}" data-p="${st}">
+      <div class="sidehead"><b class="c${st}">Player ${st}</b>
+        <span class="pips">${Array.from({ length: RT.TARGET }, (_, i) => `<i class="pt ${i < s ? "f" : ""}"></i>`).join("")}</span>
+        <span class="score">${s}</span>${fz.length ? `<span class="fzn">${fz.map(f => L[f.col]).join(", ")} frozen</span>` : ""}</div>
+      ${g0.over ? "" : `<div class="droprow">${order.map(c => `<button class="dropbtn b${st}" data-drop="${c}" data-seat="${st}" ${RT.canDrop(g0, st, c, now) ? "" : "disabled"} aria-label="Player ${st}: drop in column ${L[c]}">${L[c]}</button>`).join("")}</div>
+      <div class="dropbar" data-cd="drop" data-seat="${st}"><i></i><span class="cdt">${RT.isReady(g0, st, "drop", now) ? "Drop ready" : ""}</span></div>
+      <div class="tray">${picks.map(id => {
+        const a = AB[id], armed = mode === id && modeSeat === st, ready = !g0.over && !busy && RT.isReady(g0, st, id, now);
+        return `<button class="ab cdbtn ${armed ? "armed" : ""}" data-ab="${id}" data-seat="${st}" data-cd="${id}" ${ready || armed ? "" : "disabled"}>
+          <i class="cdfill"></i><span class="an">${a.name}</span><span class="ac">${RT.CD[id] / 1000}s · <span class="cdt"></span>${armed ? " · tap to cancel" : ""}</span><span class="ad">${RT.DESC[id]}</span></button>`;
+      }).join("")}</div>`}
+    </section>`;
+  };
+  const status = mode ? `<b class="c${modeSeat}">Player ${modeSeat}</b> · ${statusText()}` : statusText();
+  app.innerHTML = `${header(`<div class="timer mclock ${g0.sudden ? "warn" : ""}"><span id="mclock">${g0.sudden ? "SUDDEN DEATH" : fmtClock(g0.endsAt - now)}</span></div>`)}
+  ${side(2)}
+  <p class="status tabletop-status" aria-live="polite">${status}</p>
+  <div class="board-wrap"><div class="board ${ddFlash ? "dd-flash" : ""}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${flip && flip.type === "clear" && flip.ev && flip.ev.contested ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g0.over && showOver ? overHtml() : ""}</div>
+  ${side(1)}
+  ${g0.over ? `<button class="ghost" data-act="leave">Leave game</button>` : ""}`;
+}
+
 /* ================= input ================= */
 function sendAct(type, p) {
+  if (V && V.local && isRT() && type === "ability" && p.__seat == null) p.__seat = modeSeat;
   if (type === "ability") { mode = null; swapSel = null; }
   act(type, p, res => { if (res && res.error) { localMsg = res.error; mode = null; swapSel = null; render(); } });
 }
@@ -623,21 +702,47 @@ app.addEventListener("click", e => {
   if (actEl) {
     const a = actEl.dataset.act;
     if (a === "create") { err = ""; return createGame(); }
+    if (a === "local") { err = ""; return createLocal(); }
+    if (a === "p2ready") { localHandoff = false; localSeat = 2; sel = []; return publish(); }
     if (a === "copy") {
       const txt = document.getElementById("link").textContent;
       if (navigator.clipboard) navigator.clipboard.writeText(txt).then(() => { actEl.textContent = "Copied"; }).catch(() => {});
       return;
     }
-    if (a === "lock") return sendAct("pick", { ids: sel });
+    if (a === "lock") {
+      const first = isLocal && localSeat === 1;
+      sendAct("pick", { ids: sel });
+      if (first && room && room.phase === "draft") { localHandoff = true; render(); }
+      return;
+    }
     if (a === "rematch" || a === "redraft") return sendAct("vote", { kind: a });
     if (a === "leave") { err = ""; return leave(); }
     return;
   }
   if (!V || V.phase !== "play" || !V.game || V.game.over || busy) return;
-  const rt = isRT(), g = rt ? { ...V.game, cur: V.seat } : V.game;
+  const rt = isRT(), tabletop = rt && V.local;
+  const dropBtn = e.target.closest("[data-drop]");
+  if (dropBtn) {
+    const st = +dropBtn.dataset.seat, c = +dropBtn.dataset.drop;
+    if (!RT.canDrop(V.game, st, c, hostNow())) return;
+    return sendAct("drop", { c, __seat: st });
+  }
+  const abEl = e.target.closest("[data-ab]");
+  if (tabletop && abEl) {
+    const st = +abEl.dataset.seat, id = abEl.dataset.ab;
+    if (mode === id && modeSeat === st) { mode = null; swapSel = null; return render(); }
+    const gs = { ...V.game, cur: st };
+    if (!RT.isReady(gs, st, id, hostNow())) return;
+    if (!CW.hasTarget(gs, id)) { localMsg = `Player ${st}: ${AB[id].name} has no valid target right now.`; return render(); }
+    if (AB[id].t === "none") return sendAct("ability", { id, __seat: st });
+    mode = id; modeSeat = st; swapSel = null; localMsg = ""; return render();
+  }
+  if (tabletop && !mode) return;
+  const actSeat = tabletop ? modeSeat : V.seat;
+  const g = rt ? { ...V.game, cur: actSeat } : V.game;
   if (!rt && g.cur !== V.seat) return;
   localMsg = "";
-  const ab = e.target.closest("[data-ab]");
+  const ab = abEl;
   if (ab) {
     const id = ab.dataset.ab;
     if (mode === id) { mode = null; swapSel = null; return render(); }

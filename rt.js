@@ -4,6 +4,7 @@
 (function (root) {
   const C = root.CW || require("./game.js");
   const { ROWS, COLS, L, AB, opp } = C;
+  const GCD = 150; // global cooldown after any action
   const DROP_CD = 2500, MATCH_MS = 5 * 60 * 1000, TARGET = 5, FREEZE_MS = 5000;
   const CD = { block: 5000, freeze: 5000, anchor: 5000, lift: 5000, pop: 7500, swap: 10000, double: 10000, flip: 10000 };
   const DESC = {
@@ -21,7 +22,8 @@
     };
   }
   const mult = g => (g.sudden ? 0.25 : 1);
-  const isReady = (g, seat, key, now) => (g.ready[seat][key] || 0) <= now;
+  const gcdFree = (g, seat, now) => (g.ready[seat].gcd || 0) <= now;
+  const isReady = (g, seat, key, now) => (g.ready[seat][key] || 0) <= now && gcdFree(g, seat, now);
   const frozenFor = (g, seat, c, now) => g.frozen.some(f => f.player === seat && f.col === c && f.until > now);
 
   function canDrop(g, seat, c, now) {
@@ -77,12 +79,14 @@
 
   function drop(g, seat, c, now) {
     if (g.over) return "The match is over.";
+    if (!gcdFree(g, seat, now)) return "Too fast.";
     if (!isReady(g, seat, "drop", now)) return "Drop is cooling down.";
     if (c < 0 || c >= COLS || C.topEmpty(g, c) < 0) return `Column ${L[c] || "?"} is full.`;
     if (frozenFor(g, seat, c, now)) return `Column ${L[c]} is frozen.`;
     const r = C.topEmpty(g, c);
     g.grid[r][c] = seat; g.last = { r, c };
     g.ready[seat].drop = now + DROP_CD * mult(g);
+    g.ready[seat].gcd = now + GCD;
     const ev = { type: "drop", r, c };
     g.note = `Player ${seat} dropped in ${L[c]}.`;
     settle(g, seat, ev, now);
@@ -95,6 +99,7 @@
     if (!AB[id]) return "Unknown ability.";
     if (g.over) return "The match is over.";
     if (!loadout || !loadout.includes(id)) return `${AB[id].name} isn't in your loadout.`;
+    if (!gcdFree(g, seat, now)) return "Too fast.";
     if (!isReady(g, seat, id, now)) return `${AB[id].name} is cooling down.`;
     g.cur = seat;
     const t = AB[id].t, c = a.c;
@@ -116,6 +121,7 @@
     }
     if (id === "double") { g.ready[p].drop = 0; ev = { type: "double" }; note = `Player ${p} reset their drop cooldown.`; }
     g.ready[p][id] = now + CD[id] * mult(g);
+    g.ready[p].gcd = now + GCD;
     g.note = note;
     // Flip/Pop keep their own pre-animation; a score from them still counts.
     const pre = ev.prev;
@@ -153,6 +159,6 @@
     return false;
   }
 
-  const api = { CONTEST_MS, DROP_CD, MATCH_MS, TARGET, FREEZE_MS, CD, DESC, newGame, canDrop, drop, ability, tick, isReady, frozenFor };
+  const api = { GCD, gcdFree, CONTEST_MS, DROP_CD, MATCH_MS, TARGET, FREEZE_MS, CD, DESC, newGame, canDrop, drop, ability, tick, isReady, frozenFor };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.RT = api;
 })(typeof window !== "undefined" ? window : globalThis);

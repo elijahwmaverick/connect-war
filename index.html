@@ -174,6 +174,27 @@ details ul{padding-left:18px;margin:8px 0 0}
 .contest.cancel{color:var(--fg);font-size:24px}
 @keyframes contest{from{transform:translate(-50%,-50%) scale(1.8);opacity:0}}
 @media (prefers-reduced-motion:reduce){.disc.pend,.disc.scored,.contest{animation:none}}
+
+/* ---- local play ---- */
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ghost.strong{border-color:var(--fg);color:var(--fg)}
+.small{font-size:13px}
+.side{display:flex;flex-direction:column;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px}
+.side[data-p="1"]{--pc:var(--p1);border-color:rgba(240,104,58,.45)}
+.side[data-p="2"]{--pc:var(--p2);border-color:rgba(67,180,204,.45)}
+.flipside{transform:rotate(180deg)}
+.sidehead{display:flex;align-items:center;gap:8px;font-family:var(--fd);font-size:14px;letter-spacing:.06em;text-transform:uppercase}
+.sidehead .score{font-size:20px;color:var(--pc);margin-left:auto}
+.sidehead .fzn{font-size:11px;color:var(--frost);text-transform:none;letter-spacing:0}
+.sidehead .pips i.pt{width:14px;height:8px}
+.sidehead .pips i.f{background:var(--pc)}
+.droprow{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;padding-inline:6px}
+.dropbtn{height:34px;border-radius:8px;border:0;cursor:pointer;font-family:var(--fd);font-weight:700;font-size:13px;color:#111;background:var(--pc)}
+.dropbtn:disabled{opacity:.25;cursor:not-allowed}
+.side .dropbar{height:22px;font-size:11px}
+.side .tray .ab{padding:7px 6px}
+.side .tray .ad{font-size:11px}
+.tabletop-status{min-height:1.4em;text-align:center;font-size:14px}
 </style>
 </head>
 <body>
