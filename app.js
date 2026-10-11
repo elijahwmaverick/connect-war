@@ -81,8 +81,8 @@ function sayHello() {
 /* ================= host: authoritative room ================= */
 let room = null, hostTimer = null;
 
-function newRoom(c, timerOn) {
-  return { code: c, guest: null, phase: "lobby", picks: { 1: null, 2: null }, starter: 1, game: null,
+function newRoom(c, timerOn, mode) {
+  return { code: c, mode: mode === "tactics" ? "tactics" : "rt", guest: null, phase: "lobby", picks: { 1: null, 2: null }, starter: 1, game: null,
     timerOn: !!timerOn, deadline: null, timerTurn: null, votes: { rematch: [], redraft: [] } };
 }
 function saveRoom() { if (room) store("cw_host_" + room.code, JSON.stringify(room)); }
@@ -91,7 +91,7 @@ function view(seat) {
   const other = opp(seat);
   const both = !!(room.picks[1] && room.picks[2]);
   return {
-    code: room.code, seat, phase: room.phase, timerOn: room.timerOn,
+    code: room.code, mode: room.mode || "tactics", hostNow: Date.now(), seat, phase: room.phase, timerOn: room.timerOn,
     opponentJoined: seat === 1 ? !!room.guest : true,
     opponentConnected: seat === 1 ? peerOnline : true,
     myPicks: room.picks[seat], oppLocked: !!room.picks[other], oppPicks: both ? room.picks[other] : null,
@@ -125,8 +125,22 @@ function armTimer(extraMs = 0) {
     publish();
   }, room.deadline - Date.now());
 }
+let rtTicker = null;
+function ensureRtTicker() {
+  if (rtTicker) return;
+  rtTicker = setInterval(() => {
+    if (!room || room.mode !== "rt" || !room.game || room.game.over) return;
+    if (RT.tick(room.game, Date.now())) publish();
+  }, 50);
+}
 function startMatch() {
   room.phase = "play";
+  if (room.mode === "rt") {
+    room.game = RT.newGame(Date.now());
+    room.votes = { rematch: [], redraft: [] };
+    clearTimer(); room.deadline = null; ensureRtTicker();
+    return;
+  }
   room.game = CW.newGame(room.starter);
   room.votes = { rematch: [], redraft: [] };
   room.timerTurn = null; room.deadline = null; clearTimer();
@@ -161,6 +175,10 @@ function handle(seat, type, p) {
   if (type === "drop" || type === "ability") {
     const g = room.game;
     if (room.phase !== "play" || !g || g.over) return "No active match.";
+    if (room.mode === "rt") {
+      const a = { id: p.id, c: Number(p.c), r: Number(p.r), r2: Number(p.r2), c2: Number(p.c2) };
+      return type === "drop" ? RT.drop(g, seat, Number(p.c), Date.now()) : RT.ability(g, seat, a, room.picks[seat], Date.now());
+    }
     if (seat !== g.cur) return "It's not your turn.";
     let e;
     if (type === "drop") e = CW.drop(g, Number(p.c));
@@ -202,7 +220,7 @@ function act(type, p, cb) {
 function createGame() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const c = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-  room = newRoom(c, timerOn);
+  room = newRoom(c, timerOn, gameMode);
   store("cw_room", c); store("cw_role", "host");
   history.replaceState(null, "", "#" + c);
   openChannel(c, true);
@@ -213,7 +231,8 @@ function resumeHost(c) {
   if (!room) return false;
   store("cw_room", c); store("cw_role", "host");
   openChannel(c, true);
-  if (room.game && !room.game.over) { room.timerTurn = null; if (room.deadline) { const left = room.deadline - Date.now(); room.deadline = Date.now() + Math.max(1000, left); room.timerTurn = room.game.turnId; } armTimer(); }
+  if (room.mode === "rt") ensureRtTicker();
+  else if (room.game && !room.game.over) { room.timerTurn = null; if (room.deadline) { const left = room.deadline - Date.now(); room.deadline = Date.now() + Math.max(1000, left); room.timerTurn = room.game.turnId; } armTimer(); }
   publish();
   return true;
 }
@@ -243,6 +262,10 @@ let V = null, err = "", timerOn = true, sel = [];
 let mode = null, swapSel = null, localMsg = "";
 let lastSeq = -1, lastOver = false, showOver = false, anim = null, flip = null, busy = false;
 let timeLeft = null, timeAt = 0;
+let gameMode = "rt", skew = 0, readyKey = "";
+const isRT = () => !!(V && V.mode === "rt");
+const hostNow = () => Date.now() + skew;
+const fmtClock = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
 
 function onView(v) {
   if (joinTimer && !isHost) { clearInterval(joinTimer); joinTimer = null; }
@@ -251,12 +274,17 @@ function onView(v) {
   if (V && V.phase !== "play" && v.phase === "play") { lastSeq = -1; lastOver = false; showOver = false; }
   if (g) {
     if (g.seq !== lastSeq) {
+      flip = null; busy = false;
       if (lastSeq !== -1 && g.ev) {
         const t = g.ev.type;
         if (t === "flip" || t === "pop") flip = { type: t, c: g.ev.c, prev: g.ev.prev, phase: 1 };
+        else if (g.ev.clears && g.ev.prev) flip = { type: "clear", prev: g.ev.prev, clears: g.ev.clears, phase: 1, ev: g.ev };
         else anim = { ...g.ev, type: t === "block" ? "drop" : t };
       }
-      mode = null; swapSel = null; localMsg = "";
+      if (v.mode === "rt" && !g.over) {
+        localMsg = "";
+        if (swapSel && !CW.validCell({ ...g, cur: v.seat }, "swap", swapSel[0], swapSel[1], null)) swapSel = null;
+      } else { mode = null; swapSel = null; localMsg = ""; }
       if (g.over && !lastOver) {
         showOver = lastSeq === -1;
         if (!showOver) setTimeout(() => {
@@ -272,11 +300,12 @@ function onView(v) {
   if (v.myPicks) sel = v.myPicks.slice();
   else if (v.phase === "draft" && V && V.phase !== "draft") sel = [];
   timeLeft = v.timeLeftMs; timeAt = Date.now();
+  if (v.hostNow) skew = isHost ? 0 : v.hostNow - Date.now();
   V = v; if (err === "Connecting…" || /Waiting for the host/.test(err)) err = "";
   if (flip && flip.phase === 1) {
-    busy = true; render();
+    busy = flip.type !== "clear"; render();
     const f = flip;
-    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : 560);
+    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : f.type === "clear" ? 820 : 560);
   } else render();
 }
 
@@ -288,6 +317,23 @@ setInterval(() => {
   document.getElementById("tfill").style.width = Math.min(100, s / TURN_S * 100) + "%";
   document.querySelector(".timer").classList.toggle("warn", s <= 5);
 }, 250);
+
+// Real-time mode: refresh the match clock and cooldown meters without redrawing the board.
+setInterval(() => {
+  if (!isRT() || V.phase !== "play" || !V.game) return;
+  const g = V.game, now = hostNow(), mine = g.ready[V.seat] || {};
+  const ck = document.getElementById("mclock");
+  if (ck) ck.textContent = g.sudden ? "SUDDEN DEATH" : fmtClock(g.endsAt - now);
+  if (ck) ck.parentElement.classList.toggle("warn", !g.sudden && g.endsAt - now < 30000);
+  document.querySelectorAll("[data-cd]").forEach(el => {
+    const k = el.dataset.cd, total = (k === "drop" ? RT.DROP_CD : RT.CD[k]) * (g.sudden ? 0.25 : 1);
+    const rem = Math.max(0, (mine[k] || 0) - now);
+    el.style.setProperty("--p", Math.min(1, rem / total));
+    const t = el.querySelector(".cdt"); if (t) t.textContent = rem ? (rem / 1000).toFixed(1) + "s" : (k === "drop" ? "Drop ready" : "Ready");
+  });
+  const key = ["drop", ...(V.myPicks || [])].map(k => (mine[k] || 0) <= now ? 1 : 0).join("") + g.frozen.filter(f => f.until > now).length + (g.pending && g.pending.until > now ? "p" : "");
+  if (key !== readyKey) { readyKey = key; if (!busy) render(); }
+}, 100);
 
 const header = extra => `<header class="top"><h1>Connect War</h1>${extra || ""}</header>`;
 const you = p => V && p === V.seat ? "You" : "Opponent";
@@ -314,7 +360,11 @@ function renderHome() {
   <section class="setup">
     <h2>Play online</h2>
     <p class="muted">Create a game and send the code or link to your opponent. Keep this page open while you host.</p>
-    <label class="tog"><input type="checkbox" id="timerOn" ${timerOn ? "checked" : ""}> 20-second turn clock</label>
+    <div class="modes">
+      <button class="mode ${gameMode === "rt" ? "on" : ""}" data-mode="rt" aria-pressed="${gameMode === "rt"}"><span class="cn">Connect War</span><span class="cd">Real time. No turns: drops and abilities run on cooldowns. First to 5 fours in 5 minutes.</span></button>
+      <button class="mode ${gameMode === "tactics" ? "on" : ""}" data-mode="tactics" aria-pressed="${gameMode === "tactics"}"><span class="cn">Connect War: Tactics</span><span class="cd">Turn based with energy. One four wins.</span></button>
+    </div>
+    ${gameMode === "tactics" ? `<label class="tog"><input type="checkbox" id="timerOn" ${timerOn ? "checked" : ""}> 20-second turn clock</label>` : ""}
     <button class="primary" data-act="create">Create game</button>
     <div class="divider">OR</div>
     <form class="field" id="joinForm"><input id="code" maxlength="4" placeholder="CODE" autocomplete="off" aria-label="Game code" value="${waiting ? code : ""}"><button class="primary" type="submit">Join</button></form>
@@ -327,7 +377,7 @@ function renderLobby() {
   const url = location.origin + location.pathname + "#" + V.code;
   app.innerHTML = `${header()}
   <section class="setup">
-    <div class="eyebrow">Game created</div>
+    <div class="eyebrow">${modeName()} · Game created</div>
     <h2>Send this to your opponent</h2>
     <div class="code">${V.code}</div>
     <div class="link" id="link">${url}</div>
@@ -354,18 +404,34 @@ function renderDraft() {
   }
   app.innerHTML = `${header()}
   <section class="setup" data-p="${p}">
-    <div class="eyebrow c${p}">You are Player ${p}</div>
+    <div class="eyebrow c${p}">${modeName()} · You are Player ${p}</div>
     <h2>Pick 3 abilities</h2>
     <p class="muted">Your opponent can't see your picks until both of you lock in. ${V.oppLocked ? "Your opponent has locked in." : ""}</p>
     ${dc}
     <div class="cards">${Object.entries(AB).map(([id, a]) => `<button class="card ${sel.includes(id) ? "on" : ""}" data-pick="${id}" aria-pressed="${sel.includes(id)}">
-      <span class="cn">${a.name}</span><span class="cost">${a.cost} EN</span><span class="cd">${a.desc}</span></button>`).join("")}</div>
+      <span class="cn">${a.name}</span><span class="cost">${costLabel(id)}</span><span class="cd">${descOf(id)}</span></button>`).join("")}</div>
     <button class="primary" data-act="lock" ${sel.length === 3 ? "" : "disabled"}>Lock in (${sel.length}/3)</button>
     <p class="err">${err}</p>
   </section>`;
 }
 
+const modeName = () => (V && V.mode === "rt" ? "Connect War" : "Connect War: Tactics");
+const costLabel = id => (isRT() ? RT.CD[id] / 1000 + "s" : AB[id].cost + " EN");
+const descOf = id => (isRT() ? RT.DESC[id] : AB[id].desc);
+const frozenCols = (g, p) => (isRT() ? g.frozen.filter(f => f.player === p && f.until > hostNow()) : g.frozen && g.frozen.player === p ? [g.frozen] : []);
+
+function panelRT(p) {
+  const g = V.game, s = g.score[p], fz = frozenCols(g, p);
+  const picks = p === V.seat ? V.myPicks : V.oppPicks;
+  return `<div class="pl" data-p="${p}">
+    <div class="nm"><b>${you(p)}</b><span class="score">${s}</span></div>
+    <div class="pips" aria-label="${s} of ${RT.TARGET} points">${Array.from({ length: RT.TARGET }, (_, i) => `<i class="pt ${i < s ? "f" : ""}"></i>`).join("")}<span>${s}/${RT.TARGET}</span></div>
+    <div class="lo">${(picks || []).map(id => AB[id].name).join(" · ")}${fz.length ? `<br>Column ${fz.map(f => L[f.col]).join(", ")} frozen` : ""}</div>
+  </div>`;
+}
+
 function panel(p) {
+  if (isRT()) return panelRT(p);
   const g = V.game, e = g.energy[p], fz = g.frozen && g.frozen.player === p;
   const picks = p === V.seat ? V.myPicks : V.oppPicks;
   const on = g.cur === p && !g.over;
@@ -389,6 +455,12 @@ const PROMPT = {
 function statusText() {
   const g = V.game;
   if (localMsg) return localMsg;
+  if (isRT()) {
+    if (g.over) return g.result === V.seat ? `You win ${g.score[V.seat]}–${g.score[opp(V.seat)]}.` : `You lose ${g.score[V.seat]}–${g.score[opp(V.seat)]}.`;
+    if (mode) return (mode === "freeze" ? "Freeze: tap a column to lock it for your opponent for 5 seconds." : PROMPT[mode]());
+    const nt = g.note ? g.note.replace(new RegExp(`Player ${V.seat}`, "g"), "You").replace(new RegExp(`Player ${opp(V.seat)}`, "g"), "Opponent") : "";
+    return (g.sudden ? "<b>Sudden death</b>: next score wins. " : "") + (nt || "Go! Drop discs as fast as your cooldowns allow.");
+  }
   if (g.over) return g.result ? (g.result === V.seat ? "You connect four." : "Your opponent connects four.") : "Board full. Draw.";
   if (mode) return PROMPT[mode]();
   const note = g.note ? g.note.replace(new RegExp(`Player ${V.seat}`, "g"), "You").replace(new RegExp(`Player ${opp(V.seat)}`, "g"), "Opponent") + " " : "";
@@ -408,15 +480,31 @@ function overHtml() {
   return `<div class="over"><div class="box">
     <div class="eyebrow ${g.result ? "c" + g.result : ""}">Match over</div>
     <h2>${title}</h2>
+    ${isRT() ? `<p class="muted">${g.score[V.seat]}–${g.score[other]}${g.sudden ? " in sudden death" : ""}</p>` : ""}
     ${sub ? `<p class="muted">${sub}</p>` : ""}
     <button class="primary" data-act="rematch" ${r.includes(V.seat) ? "disabled" : ""}>${r.includes(V.seat) ? "Waiting for opponent" : "Rematch"}</button>
     <button class="ghost" data-act="redraft" ${d.includes(V.seat) ? "disabled" : ""}>${d.includes(V.seat) ? "Waiting for opponent" : "New loadouts"}</button>
     <button class="ghost" data-act="leave">Leave game</button></div></div>`;
 }
 
+// After fours are removed, discs that were above them fall by the number removed in that column.
+function clearedFall(f, r, c) {
+  let n = 0, maxRow = -1;
+  for (const grp of f.clears) for (const k of grp.cells) { const [rr, cc] = k.split(",").map(Number); if (cc === c) { n++; maxRow = Math.max(maxRow, rr); } }
+  return n && r <= maxRow ? n : 0;
+}
+
 function renderPlay() {
-  const g = V.game, myTurn = g.cur === V.seat && !g.over && !busy;
+  const rt = isRT(), now = hostNow();
+  const g0 = V.game, g = rt ? { ...g0, cur: V.seat } : g0;
+  const myTurn = rt ? !g.over && !busy : g.cur === V.seat && !g.over && !busy;
+  const canDropCol = c => (rt ? RT.canDrop(g, V.seat, c, now) : CW.canDrop(g, c));
   const shown = flip && flip.phase === 1 ? { ...g, grid: flip.prev.grid, anc: flip.prev.anc } : g;
+  const cleared = new Map();
+  if (flip && flip.type === "clear") {
+    flip.clears.forEach(f => f.cells.forEach((k, i) => cleared.set(k, i)));
+  }
+  const pend = rt && g.pending ? new Set(g.pending.cells) : null;
   const mt = mode ? AB[mode].t : null;
   const wins = new Map(g.over && !(flip && flip.phase === 1) ? g.win.map((k, i) => [k, i]) : []);
   let cols = "";
@@ -426,9 +514,9 @@ function renderPlay() {
     if (anim && anim.type === "freeze" && anim.c === c) cls += " frz-in";
     if (myTurn) {
       if (mt === "col" && CW.validCol(g, mode, c)) cls += " tgt";
-      else if (!mode && CW.canDrop(g, c)) cls += " can";
+      else if (!mode && canDropCol(c)) cls += " can";
     }
-    if (g.frozen && !g.over && g.frozen.col === c) cls += " frz";
+    if (!g.over && (rt ? g.frozen.some(f => f.col === c && f.until > now) : g.frozen && g.frozen.col === c)) cls += " frz";
     let cells = "";
     for (let r = 0; r < ROWS; r++) {
       const v = shown.grid[r][c]; let cc = "cell";
@@ -441,7 +529,10 @@ function renderPlay() {
       if (v) {
         let n = 0, extra = "", style = "";
         if (anim && anim.type === "drop" && at(anim.r, anim.c)) n = r + 1;
-        if (flip && flip.phase === 2 && flip.c === c) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
+        if (flip && flip.phase === 2 && flip.type !== "clear" && flip.c === c) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
+        if (flip && flip.phase === 2 && flip.type === "clear") n = clearedFall(flip, r, c);
+        if (flip && flip.phase === 1 && flip.type === "clear" && flip.ev && flip.ev.type === "drop" && at(flip.ev.r, flip.ev.c)) n = r + 1;
+        if (flip && flip.phase === 1 && flip.type === "clear" && cleared.has(r + "," + c)) { extra += " scored"; style += `--wd:${(0.25 + cleared.get(r + "," + c) * 0.06).toFixed(2)}s;`; }
         if (n) { extra += " fall"; style = `--from:calc(${-n} * (116.3% + 3px));`; }
         if (flip && flip.phase === 1 && flip.type === "pop" && flip.c === c && r === ROWS - 1) extra += " burst";
         if (anim && anim.type === "anchor" && at(anim.r, anim.c)) extra += " anc-in";
@@ -449,6 +540,7 @@ function renderPlay() {
           const from = at(anim.r, anim.c) ? [anim.r2, anim.c2] : at(anim.r2, anim.c2) ? [anim.r, anim.c] : null;
           if (from) { extra += " slide"; style += `--sx:calc(${from[1] - c} * (116.3% + 7px));--sy:calc(${from[0] - r} * (116.3% + 3px));`; }
         }
+        if (pend && pend.has(r + "," + c) && !(flip && flip.phase === 1)) extra += " pend";
         const lst = g.last && g.last.r === r && g.last.c === c && !g.over;
         disc = `<div class="disc d${v} ${shown.anc[r][c] ? "anc" : ""}${extra} ${lst ? "last" : ""}" ${style ? `style="${style}"` : ""}></div>`;
       } else if (anim && anim.type === "lift" && at(anim.r, anim.c)) {
@@ -462,13 +554,21 @@ function renderPlay() {
   const ddFlash = anim && anim.type === "double";
   anim = null;
   const mine = V.myPicks || [];
-  const tray = g.over ? "" : `<div class="tray">${mine.map(id => {
+  const trayRT = () => `<div class="dropbar" data-cd="drop"><i></i><span class="cdt">${RT.isReady(g, V.seat, "drop", now) ? "Drop ready" : ""}</span></div>
+  <div class="tray">${mine.map(id => {
+    const a = AB[id], ready = myTurn && RT.isReady(g, V.seat, id, now);
+    return `<button class="ab cdbtn ${mode === id ? "armed" : ""}" data-ab="${id}" data-cd="${id}" ${ready || mode === id ? "" : "disabled"}>
+      <i class="cdfill"></i><span class="an">${a.name}</span><span class="ac">${RT.CD[id] / 1000}s · <span class="cdt"></span>${mode === id ? " · tap to cancel" : ""}</span><span class="ad">${RT.DESC[id]}</span></button>`;
+  }).join("")}</div>`;
+  const tray = g.over ? "" : rt ? trayRT() : `<div class="tray">${mine.map(id => {
     const a = AB[id], ready = myTurn && CW.abilityReady(g, id, mine);
     return `<button class="ab ${mode === id ? "armed" : ""}" data-ab="${id}" ${ready || mode === id ? "" : "disabled"} title="${a.desc}">
       <span class="an">${a.name}</span><span class="ac">${a.cost} EN${mode === id ? " · tap to cancel" : ""}</span><span class="ad">${a.desc}</span></button>`;
   }).join("")}</div>`;
   const tl = timeLeft == null ? null : Math.min(TURN_S, Math.max(0, Math.ceil((timeLeft - (Date.now() - timeAt)) / 1000)));
-  const timer = V.timerOn
+  const timer = rt
+    ? `<div class="timer mclock ${g.sudden ? "warn" : ""}"><span id="mclock">${g.sudden ? "SUDDEN DEATH" : fmtClock(g.endsAt - now)}</span></div>`
+    : V.timerOn
     ? `<div class="timer ${tl != null && tl <= 5 ? "warn" : ""}"><div class="tbar"><i id="tfill" style="width:${tl == null ? 0 : tl / TURN_S * 100}%"></i></div><span id="tnum">${tl == null ? "–" : tl + "s"}</span></div>`
     : `<div class="timer off"><span>No clock</span></div>`;
   const dc = !V.opponentConnected
@@ -477,21 +577,27 @@ function renderPlay() {
   ${dc}
   <div class="players">${panel(V.seat)}${panel(opp(V.seat))}</div>
   <p class="status" aria-live="polite">${statusText()}</p>
-  <div class="board-wrap"><div class="board ${g.over && g.result && !(flip && flip.phase === 1) ? "won" : ""} ${ddFlash ? "dd-flash" : ""}">${cols}</div>${g.over && showOver ? overHtml() : ""}</div>
+  <div class="board-wrap"><div class="board ${!rt && g.over && g.result && !(flip && flip.phase === 1) ? "won" : ""} ${ddFlash ? "dd-flash" : ""}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${flip && flip.type === "clear" && flip.ev && flip.ev.contested ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>
   <div class="letters">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
   ${tray}
   <p class="err">${err}</p>
-  <details><summary>Rules</summary><ul>
+  ${rt ? `<details><summary>Rules</summary><ul>
+    <li>No turns. Drop whenever your 2.5s drop cooldown is ready. Each ability has its own cooldown.</li>
+    <li>Each four scores 1 point; those discs are removed and the column falls.</li>
+    <li>Contested: after a four, your opponent has 0.25s to make their own four. If they do, both cancel.</li>
+    <li>First to 5 wins. After 5 minutes the higher score wins. A tie goes to sudden death: cooldowns ×¼, next score wins.</li>
+    <li>A full board with no four is wiped.</li></ul></details>` : `<details><summary>Rules</summary><ul>
     <li>Connect 4 in a row on an 8×7 board.</li>
     <li>Each turn: gain 1 energy (max 7), optionally use one ability, then drop one disc.</li>
     <li>Gold ring = anchored disc (immune to Pop and Swap). Striped column = frozen for one player.</li>
     <li>If an ability makes four for both players, the player who used it wins.</li>
     <li>Turn clock timeout: no drop and no energy that turn.</li>
-    <li>Rematch swaps who goes first.</li></ul></details>`;
+    <li>Rematch swaps who goes first.</li></ul></details>`}`;
 }
 
 /* ================= input ================= */
 function sendAct(type, p) {
+  if (type === "ability") { mode = null; swapSel = null; }
   act(type, p, res => { if (res && res.error) { localMsg = res.error; mode = null; swapSel = null; render(); } });
 }
 
@@ -505,6 +611,8 @@ app.addEventListener("submit", e => {
 app.addEventListener("change", e => { if (e.target.id === "timerOn") timerOn = e.target.checked; });
 
 app.addEventListener("click", e => {
+  const modeBtn = e.target.closest("[data-mode]");
+  if (modeBtn) { gameMode = modeBtn.dataset.mode; return render(); }
   const pick = e.target.closest("[data-pick]");
   if (pick) {
     const id = pick.dataset.pick, i = sel.indexOf(id);
@@ -526,14 +634,14 @@ app.addEventListener("click", e => {
     return;
   }
   if (!V || V.phase !== "play" || !V.game || V.game.over || busy) return;
-  const g = V.game;
-  if (g.cur !== V.seat) return;
+  const rt = isRT(), g = rt ? { ...V.game, cur: V.seat } : V.game;
+  if (!rt && g.cur !== V.seat) return;
   localMsg = "";
   const ab = e.target.closest("[data-ab]");
   if (ab) {
     const id = ab.dataset.ab;
     if (mode === id) { mode = null; swapSel = null; return render(); }
-    if (!CW.abilityReady(g, id, V.myPicks)) return;
+    if (rt ? !RT.isReady(g, V.seat, id, hostNow()) : !CW.abilityReady(g, id, V.myPicks)) return;
     if (!CW.hasTarget(g, id)) { localMsg = `${AB[id].name} has no valid target right now.`; return render(); }
     if (AB[id].t === "none") return sendAct("ability", { id });
     mode = id; swapSel = null; return render();
@@ -541,7 +649,10 @@ app.addEventListener("click", e => {
   const cell = e.target.closest(".cell");
   if (!cell) return;
   const r = +cell.dataset.r, c = +cell.dataset.c;
-  if (!mode) return sendAct("drop", { c });
+  if (!mode) {
+    if (rt && !RT.canDrop(g, V.seat, c, hostNow())) return;
+    return sendAct("drop", { c });
+  }
   const t = AB[mode].t;
   if (t === "col") {
     if (!CW.validCol(g, mode, c)) { localMsg = "Not a valid column. " + PROMPT[mode](); return render(); }

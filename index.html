@@ -148,6 +148,32 @@ details{color:var(--muted);font-size:14px;line-height:1.45}
 summary{cursor:pointer;font-family:var(--fd);letter-spacing:.08em;text-transform:uppercase;font-size:12px}
 details ul{padding-left:18px;margin:8px 0 0}
 @media (prefers-reduced-motion:reduce){.fall,.cell.win .disc,.col.flip1,.burst,.slide,.anc-in,.anc-in::after,.col.frz-in::after,.board.dd-flash{animation:none}.lift-out{display:none}}
+
+/* ---- mode picker ---- */
+.modes{display:grid;gap:8px}
+.mode{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:4px}
+.mode .cn{font-family:var(--fd);font-weight:700;font-size:16px;letter-spacing:.04em}
+.mode .cd{font-size:13px;color:var(--muted);line-height:1.35}
+.mode.on{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold) inset}
+/* ---- real-time mode ---- */
+.mclock{font-size:20px;color:var(--fg);letter-spacing:.06em}
+.mclock.warn{color:var(--danger)}
+.pl .score{font-family:var(--fd);font-size:20px;color:var(--pc)}
+.pips i.pt{width:18px;height:10px;border-radius:3px}
+.dropbar{position:relative;height:30px;border-radius:8px;background:var(--panel);border:1px solid var(--line);overflow:hidden;display:flex;align-items:center;justify-content:center;font-family:var(--fd);font-size:13px;letter-spacing:.08em;text-transform:uppercase}
+.dropbar i{position:absolute;inset:0;transform-origin:left;transform:scaleX(var(--p,0));background:rgba(255,255,255,.12)}
+.dropbar span{position:relative}
+.cdbtn{position:relative;overflow:hidden}
+.cdbtn .cdfill{position:absolute;left:0;right:0;bottom:0;height:calc(var(--p,0) * 100%);background:rgba(255,255,255,.08);pointer-events:none}
+.cdbtn>span{position:relative}
+.disc.pend{animation:pend .25s ease-in-out infinite alternate;box-shadow:0 0 0 3px var(--gold),0 0 14px 3px var(--gold)}
+@keyframes pend{to{transform:scale(1.12);filter:brightness(1.5)}}
+.disc.scored{animation:scored .55s ease-out forwards;animation-delay:var(--wd,.25s)}
+@keyframes scored{0%{transform:scale(1);box-shadow:0 0 0 3px var(--gold)}40%{transform:scale(1.35);filter:brightness(2);box-shadow:0 0 0 3px var(--gold),0 0 20px 6px var(--gold)}100%{transform:scale(.2);opacity:0}}
+.contest{position:absolute;left:50%;top:38%;transform:translate(-50%,-50%);z-index:8;pointer-events:none;font-family:var(--fd);font-weight:700;font-size:30px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);text-shadow:0 2px 0 #000,0 0 18px rgba(242,193,78,.7);animation:contest .5s ease-out}
+.contest.cancel{color:var(--fg);font-size:24px}
+@keyframes contest{from{transform:translate(-50%,-50%) scale(1.8);opacity:0}}
+@media (prefers-reduced-motion:reduce){.disc.pend,.disc.scored,.contest{animation:none}}
 </style>
 </head>
 <body>
@@ -155,6 +181,7 @@ details ul{padding-left:18px;margin:8px 0 0}
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
 <script src="game.js"></script>
+<script src="rt.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -8,7 +8,8 @@ The **host's device runs the match** (rules, turn clock, hidden picks) and sends
 
 - `index.html`: the page and styles
 - `app.js`: online play (rooms, host logic, Supabase connection, board drawing)
-- `game.js`: the rules engine
+- `game.js`: the rules engine (Tactics, plus shared board helpers)
+- `rt.js`: the real-time Connect War rules
 - `config.js`: your Supabase project URL and key (**edit this one**)
 
 ## 1. Supabase (free, about 3 minutes)
@@ -32,6 +33,11 @@ If you've turned on **Realtime → Settings → "Allow public access" = off** (p
 2. Upload the five files (`index.html`, `app.js`, `game.js`, `config.js`, `README.md`) to it. Use **Add file → Upload files** on github.com, or push with git.
 3. In the repo: **Settings → Pages → Build and deployment → Source: Deploy from a branch → Branch: main / (root) → Save**.
 4. After about a minute, the game is at `https://YOUR-NAME.github.io/connect-war/`.
+
+## Game modes
+
+- **Connect War** (default): real time, no turns. Drops have a 2.5s cooldown and each ability its own cooldown. Each four scores a point (those discs are removed). A four can be Contested: if the opponent makes a four within 0.25s, both cancel. First to 5, or the higher score after 5 minutes; a tie goes to sudden death with cooldowns cut to 1/4.
+- **Connect War: Tactics**: turn based with energy. One four wins.
 
 ## 3. Play
 

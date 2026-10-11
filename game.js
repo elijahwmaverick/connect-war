@@ -194,6 +194,7 @@
     endTurn(g);
   }
 
-  const api = { ROWS, COLS, MAXE, TURN_S, L, AB, opp, newGame, canDrop, drop, ability, timeout, validCol, validCell, hasTarget, abilityReady, count };
+  const api = { ROWS, COLS, MAXE, TURN_S, L, AB, opp, newGame, canDrop, drop, ability, timeout, validCol, validCell, hasTarget, abilityReady, count,
+    lines, topEmpty, topDisc, stack, writeStack, clone, partner, blank };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.CW = api;
 })(typeof window !== "undefined" ? window : globalThis);
