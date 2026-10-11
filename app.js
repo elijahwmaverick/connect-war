@@ -289,7 +289,13 @@ let mode = null, swapSel = null, localMsg = "";
 let lastSeq = -1, lastOver = false, showOver = false, flip = null, busy = false, confirmMenu = false;
 // Short animations in flight. Re-renders resume them part-way (negative animation-delay) instead of restarting or dropping them.
 let fx = [];
-const FX_MS = { drop: 450, freeze: 650, anchor: 550, swap: 500, lift: 600, double: 750 };
+const FX_MS = { drop: 450, freeze: 650, anchor: 550, swap: 500, lift: 600, double: 750, score: 900, contest: 1100, reinforce: 450 };
+// Full Auto drop-charge readout, e.g. "Drops ●●○ · 1.4s".
+function dropText(g, seat, now) {
+  const ch = RT.chargesAt(g, seat, now);
+  const dots = "●".repeat(ch.n) + "○".repeat(RT.MAX_CHARGES - ch.n);
+  return `Drops ${dots}${ch.n < RT.MAX_CHARGES ? " · " + ((ch.next - now) / 1000).toFixed(1) + "s" : ""}`;
+}
 const fxNow = () => performance.now();
 function fxFind(type, pred) {
   const t = fxNow();
@@ -298,7 +304,7 @@ function fxFind(type, pred) {
   return f ? { ...f, ad: `--ad:${-Math.round(t - f.start)}ms;` } : null;
 }
 let timeLeft = null, timeAt = 0;
-let gameMode = "rt", skew = 0, readyKey = "";
+let gameMode = "tactics", skew = 0, readyKey = "";
 const isRT = () => !!(V && V.mode === "rt");
 const hostNow = () => Date.now() + skew;
 const fmtClock = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
@@ -363,13 +369,21 @@ setInterval(() => {
   if (ck) ck.textContent = g.sudden ? "SUDDEN DEATH" : fmtClock(g.endsAt - now);
   if (ck) ck.parentElement.classList.toggle("warn", !g.sudden && g.endsAt - now < 30000);
   document.querySelectorAll("[data-cd]").forEach(el => {
-    const k = el.dataset.cd, total = (k === "drop" ? RT.DROP_CD : RT.CD[k]) * (g.sudden ? 0.25 : 1);
+    const k = el.dataset.cd, seat = el.dataset.seat || V.seat;
+    if (k === "drop") {
+      const ch = RT.chargesAt(g, seat, now);
+      el.style.setProperty("--p", ch.n < RT.MAX_CHARGES ? Math.min(1, (ch.next - now) / ch.step) : 0);
+      el.classList.toggle("empty", ch.n === 0);
+      const t = el.querySelector(".cdt"); if (t) t.textContent = dropText(g, seat, now);
+      return;
+    }
+    const total = RT.CD[k] * (g.sudden ? 0.25 : 1);
     const rem = Math.max(0, (rdy(el.dataset.seat || V.seat)[k] || 0) - now);
     el.style.setProperty("--p", Math.min(1, rem / total));
-    const t = el.querySelector(".cdt"); if (t) t.textContent = rem ? (rem / 1000).toFixed(1) + "s" : (k === "drop" ? "Drop ready" : "Ready");
+    const t = el.querySelector(".cdt"); if (t) t.textContent = rem ? (rem / 1000).toFixed(1) + "s" : "Ready";
   });
   const seats = V.local ? [1, 2] : [V.seat];
-  const key = seats.map(st => ["gcd", "drop", ...((st === V.seat ? V.myPicks : V.oppPicks) || [])].map(k => (rdy(st)[k] || 0) <= now ? 1 : 0).join("")).join("|") + g.frozen.filter(f => f.until > now).length + (g.pending && g.pending.until > now ? "p" : "");
+  const key = seats.map(st => ["gcd", ...((st === V.seat ? V.myPicks : V.oppPicks) || [])].map(k => (rdy(st)[k] || 0) <= now ? 1 : 0).join("") + RT.chargesAt(g, st, now).n).join("|") + g.frozen.filter(f => f.until > now).length + (g.pending && g.pending.until > now ? "p" : "");
   if (key !== readyKey) { readyKey = key; if (!busy) render(); }
 }, 100);
 
@@ -418,8 +432,8 @@ function renderHome() {
   <section class="setup">
     <h2>New game</h2>
     <div class="modes">
-      <button class="mode ${gameMode === "rt" ? "on" : ""}" data-mode="rt" aria-pressed="${gameMode === "rt"}"><span class="cn">Connect War</span><span class="cd">Real time. No turns: drops and abilities run on cooldowns. First to 5 fours in 5 minutes.</span></button>
-      <button class="mode ${gameMode === "tactics" ? "on" : ""}" data-mode="tactics" aria-pressed="${gameMode === "tactics"}"><span class="cn">Connect War: Tactics</span><span class="cd">Turn based with energy. One four wins.</span></button>
+      <button class="mode ${gameMode === "tactics" ? "on" : ""}" data-mode="tactics" aria-pressed="${gameMode === "tactics"}"><span class="cn">Connect War</span><span class="cd">Turn based with energy. One four wins.</span></button>
+      <button class="mode ${gameMode === "rt" ? "on" : ""}" data-mode="rt" aria-pressed="${gameMode === "rt"}"><span class="cn">Connect War: Full Auto</span><span class="cd">Real time. No turns: drop charges and ability cooldowns. Scored fours turn to stone. First to 5 in 5 minutes.</span></button>
     </div>
     ${gameMode === "tactics" ? `<label class="tog"><input type="checkbox" id="timerOn" ${timerOn ? "checked" : ""}> 20-second turn clock</label>` : ""}
     <div class="row2">
@@ -479,7 +493,7 @@ function renderDraft() {
   </section>`;
 }
 
-const modeName = () => (V && V.mode === "rt" ? "Connect War" : "Connect War: Tactics");
+const modeName = () => (V && V.mode === "rt" ? "Connect War: Full Auto" : "Connect War");
 const costLabel = id => (isRT() ? RT.CD[id] / 1000 + "s" : AB[id].cost + " EN");
 const descOf = id => (isRT() ? RT.DESC[id] : AB[id].desc);
 const frozenCols = (g, p) => (isRT() ? g.frozen.filter(f => f.player === p && f.until > hostNow()) : g.frozen && g.frozen.player === p ? [g.frozen] : []);
@@ -514,6 +528,7 @@ const PROMPT = {
   pop: () => `Pop: tap a column whose ${V && V.game && V.game.gdir === -1 ? "top" : "bottom"} disc is your opponent's.`,
   swap: () => "Swap: tap a disc, then an adjacent disc of the other color.",
   flip: () => "Flip: tap a column with 2 or more discs.",
+  reinforce: () => `Reinforce: tap a column to slide your disc in from the ${V && V.game && V.game.gdir === -1 ? "top" : "bottom"}.`,
   grenade: () => "Grenade: tap a column to drop it. It explodes 2 seconds later."
 };
 
@@ -614,9 +629,15 @@ function renderPlay() {
         if (flip && flip.phase === 2 && flip.type === "clear") n = clearedFall(flip, r, c, gup);
         if (flip && flip.phase === 1 && flip.type === "clear" && flip.ev && flip.ev.type === "drop" && at(flip.ev.r, flip.ev.c)) n = gup ? ROWS - r : r + 1;
         if (flip && flip.phase === 1 && flip.type === "clear" && cleared.has(r + "," + c)) { extra += flip.ev && flip.ev.type === "boom" ? " boomed" : " scored"; style += `--wd:${(0.25 + cleared.get(r + "," + c) * 0.06).toFixed(2)}s;`; }
+        if (v === 5) n = 0; // fixed stones never move
         if (n) { const [k, st] = motion(n); extra += k; style += st; }
         const popFloor = (flip && flip.prev && flip.prev.gdir === -1) || (!flip && gup) ? 0 : ROWS - 1;
         if (flip && flip.phase === 1 && flip.type === "pop" && flip.c === c && r === popFloor) extra += " burst";
+        const key = r + "," + c;
+        const pfx = fxFind("score", f => (f.petrify || []).includes(key)) || fxFind("contest", f => (f.petrify || []).includes(key));
+        if (pfx) { extra += " petrify"; style += pfx.ad; }
+        const rfx = fxFind("reinforce", f => f.c === c && (f.gdir === -1 ? r < f.n : r >= ROWS - f.n));
+        if (rfx) { extra += " push"; style += rfx.ad + `--push:calc(${rfx.gdir === -1 ? -1 : 1} * (116.3% + 3px));`; }
         const afx = fxFind("anchor", f => at(f.r, f.c));
         if (afx) { extra += " anc-in"; style += afx.ad; }
         const sfx = fxFind("swap", f => at(f.r, f.c) || at(f.r2, f.c2));
@@ -641,7 +662,7 @@ function renderPlay() {
   const dd = fxFind("double");
   const ddFlash = dd ? `dd-flash" style="${dd.ad}` : "";
   const mine = V.myPicks || [];
-  const trayRT = () => `<div class="dropbar" data-cd="drop"><i></i><span class="cdt">${RT.isReady(g, V.seat, "drop", now) ? "Drop ready" : ""}</span></div>
+  const trayRT = () => `<div class="dropbar" data-cd="drop"><i></i><span class="cdt">${dropText(g, V.seat, now)}</span></div>
   <div class="tray">${mine.map(id => {
     const a = AB[id], ready = myTurn && RT.isReady(g, V.seat, id, now);
     return `<button class="ab cdbtn ${mode === id ? "armed" : ""}" data-ab="${id}" data-cd="${id}" ${ready || mode === id ? "" : "disabled"}>
@@ -665,15 +686,15 @@ function renderPlay() {
   ${dc}
   <div class="players">${panel(V.seat)}${panel(opp(V.seat))}</div>
   <p class="status" aria-live="polite">${statusText()}</p>
-  <div class="board-wrap"><div class="board ${!rt && g.over && g.result && !(flip && flip.phase === 1) ? "won" : ""} ${gravCls()} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${flip && flip.type === "clear" && flip.ev && flip.ev.contested ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>
+  <div class="board-wrap"><div class="board ${!rt && g.over && g.result && !(flip && flip.phase === 1) ? "won" : ""} ${gravCls()} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>
   <div class="letters">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
   ${g.gdir === -1 ? `<div class="gravtag">Gravity is up: discs rise from the bottom</div>` : ""}
   ${tray}
   <p class="err">${err}</p>
   ${rt ? `<details><summary>Rules</summary><ul>
-    <li>No turns. Drop whenever your 2.5s drop cooldown is ready. Each ability has its own cooldown. Any action also starts a 0.15s global cooldown.</li>
-    <li>Each four scores 1 point; those discs are removed and the column falls.</li>
-    <li>Contested: after a four, your opponent has 0.5s to make their own four. If they do, both cancel.</li>
+    <li>No turns. You hold up to 3 drop charges; one recharges every 2.5s. Each ability has its own cooldown. Any action also starts a 0.15s global cooldown.</li>
+    <li>Each four scores 1 point, and its discs turn into fixed stones. Fixed stones never move (not even with Gravity Flip); a grenade can destroy them.</li>
+    <li>Contested: after a four, your opponent has 0.5s to make their own four. If they do, neither scores and both fours turn to stone.</li>
     <li>First to 5 wins. After 5 minutes the higher score wins. A tie goes to sudden death: cooldowns ×¼, next score wins.</li>
     <li>A full board with no four is wiped.</li></ul></details>` : `<details><summary>Rules</summary><ul>
     <li>Connect 4 in a row on an 8×7 board.</li>
@@ -695,7 +716,7 @@ function renderTabletop({ g, g0, now, cols, pend, ddFlash }) {
         <span class="pips">${Array.from({ length: RT.TARGET }, (_, i) => `<i class="pt ${i < s ? "f" : ""}"></i>`).join("")}</span>
         <span class="score">${s}</span>${fz.length ? `<span class="fzn">${fz.map(f => L[f.col]).join(", ")} frozen</span>` : ""}</div>
       ${g0.over ? "" : `<div class="droprow">${order.map(c => `<button class="dropbtn b${st}" data-drop="${c}" data-seat="${st}" ${RT.canDrop(g0, st, c, now) ? "" : "disabled"} aria-label="Player ${st}: drop in column ${L[c]}">${L[c]}</button>`).join("")}</div>
-      <div class="dropbar" data-cd="drop" data-seat="${st}"><i></i><span class="cdt">${RT.isReady(g0, st, "drop", now) ? "Drop ready" : ""}</span></div>
+      <div class="dropbar" data-cd="drop" data-seat="${st}"><i></i><span class="cdt">${dropText(g0, st, now)}</span></div>
       <div class="tray">${picks.map(id => {
         const a = AB[id], armed = mode === id && modeSeat === st, ready = !g0.over && !busy && RT.isReady(g0, st, id, now);
         return `<button class="ab cdbtn ${armed ? "armed" : ""}" data-ab="${id}" data-seat="${st}" data-cd="${id}" ${ready || armed ? "" : "disabled"}>
@@ -707,7 +728,7 @@ function renderTabletop({ g, g0, now, cols, pend, ddFlash }) {
   app.innerHTML = `${header(`<div class="timer mclock ${g0.sudden ? "warn" : ""}"><span id="mclock">${g0.sudden ? "SUDDEN DEATH" : fmtClock(g0.endsAt - now)}</span></div>`)}
   ${side(2)}
   <p class="status tabletop-status" aria-live="polite">${status}${g0.gdir === -1 ? ` <span class="gravtag inline">Gravity up</span>` : ""}</p>
-  <div class="board-wrap"><div class="board ${gravCls()} ${g0.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${flip && flip.type === "clear" && flip.ev && flip.ev.contested ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g0.over && showOver ? overHtml() : ""}</div>
+  <div class="board-wrap"><div class="board ${gravCls()} ${g0.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g0.over && showOver ? overHtml() : ""}</div>
   ${side(1)}
   ${g0.over ? `<button class="ghost" data-act="leave">Leave game</button>` : ""}`;
 }

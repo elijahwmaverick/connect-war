@@ -1,22 +1,24 @@
-// Connect War (real-time mode). No turns: every action has a per-player cooldown.
-// First to 5 fours wins. After 5 minutes the higher score wins; a tie goes to sudden death
-// (cooldowns at 1/4) until someone scores. Uses the board helpers from game.js.
+// Connect War: Full Auto (real-time mode). No turns: every action has a per-player cooldown.
+// Drops use charges (hold 3, one recharges every 2.5s). Each four scores a point and its discs
+// turn into fixed stones. First to 5 wins; after 5 minutes the higher score wins; a tie goes to
+// sudden death (cooldowns at 1/4) until someone scores. Uses the board helpers from game.js.
 (function (root) {
   const C = root.CW || require("./game.js");
   const { ROWS, COLS, L, AB, opp } = C;
   const GCD = 150; // global cooldown after any action
-  const DROP_CD = 2500, MATCH_MS = 5 * 60 * 1000, TARGET = 5, FREEZE_MS = 5000;
-  const CD = { block: 5000, freeze: 5000, anchor: 5000, lift: 5000, pop: 7500, swap: 10000, double: 10000, flip: 10000, gravity: 15000, grenade: 7500 };
+  const DROP_CD = 2500, MAX_CHARGES = 3, MATCH_MS = 5 * 60 * 1000, TARGET = 5, FREEZE_MS = 5000;
+  const CD = { block: 5000, freeze: 5000, anchor: 5000, lift: 5000, pop: 7500, swap: 10000, double: 10000, flip: 10000, gravity: 15000, grenade: 7500, reinforce: 6000 };
   const DESC = {
     ...Object.fromEntries(Object.entries(AB).map(([k, v]) => [k, v.desc])),
     freeze: "Lock a column for your opponent for 5 seconds.",
-    double: "Instantly reset your drop cooldown."
+    double: "Instantly refill all 3 drop charges."
   };
 
   function newGame(now) {
     return {
       mode: "rt", grid: C.blank(0), anc: C.blank(false), cur: 0,
       score: { 1: 0, 2: 0 }, ready: { 1: {}, 2: {} }, frozen: [], pending: null,
+      charges: { 1: { n: MAX_CHARGES, next: 0 }, 2: { n: MAX_CHARGES, next: 0 } },
       endsAt: now + MATCH_MS, sudden: false, over: false, result: null, win: [],
       last: null, note: "", ev: null, seq: 0
     };
@@ -26,17 +28,29 @@
   const isReady = (g, seat, key, now) => (g.ready[seat][key] || 0) <= now && gcdFree(g, seat, now);
   const frozenFor = (g, seat, c, now) => g.frozen.some(f => f.player === seat && f.col === c && f.until > now);
 
+  // Drop charges: work out how many have refilled by `now` without changing the stored state.
+  function chargesAt(g, seat, now) {
+    const ch = (g.charges && g.charges[seat]) || { n: MAX_CHARGES, next: 0 };
+    let n = ch.n, next = ch.next;
+    const step = DROP_CD * mult(g);
+    while (n < MAX_CHARGES && next && now >= next) { n++; next = n < MAX_CHARGES ? next + step : 0; }
+    return { n, next: n < MAX_CHARGES ? next : 0, step };
+  }
+  function spendCharge(g, seat, now) {
+    const c = chargesAt(g, seat, now);
+    g.charges[seat] = { n: c.n - 1, next: c.n === MAX_CHARGES ? now + c.step : c.next };
+  }
   function canDrop(g, seat, c, now) {
-    return !g.over && c >= 0 && c < COLS && isReady(g, seat, "drop", now) && C.topEmpty(g, c) >= 0 && !frozenFor(g, seat, c, now);
+    return !g.over && c >= 0 && c < COLS && gcdFree(g, seat, now) && chargesAt(g, seat, now).n > 0 && C.topEmpty(g, c) >= 0 && !frozenFor(g, seat, c, now);
   }
 
   const CONTEST_MS = 500;
-  function removeCells(g, cells) {
-    for (const k of cells) { const [r, c] = k.split(",").map(Number); g.grid[r][c] = 0; g.anc[r][c] = false; }
-    for (let c = 0; c < COLS; c++) C.writeStack(g, c, C.stack(g, c));
+  // Scored (or cancelled) fours turn into fixed stones: they never move again but a grenade can destroy them.
+  function petrify(g, cells) {
+    for (const k of cells) { const [r, c] = k.split(",").map(Number); if (g.grid[r][c] === 1 || g.grid[r][c] === 2) { g.grid[r][c] = C.FIXED; g.anc[r][c] = false; } }
     g.last = null;
   }
-  // Look for new fours. A first four starts a 0.25s "Contested!" window; a four by the other
+  // Look for new fours. A first four starts a 0.5s "Contested!" window; a four by the other
   // player inside that window (or at the same instant) cancels both. Bounded to avoid loops.
   function settle(g, mover, ev, now, depth = 0) {
     if (depth > 8) return;
@@ -47,11 +61,11 @@
     const rivals = pend ? found.filter(f => f.p !== pend.p) : [];
     if ((pend && rivals.length) || (!pend && found.length === 2)) {
       const groups = pend ? [{ p: pend.p, cells: pend.cells }, ...rivals] : found;
-      if (!ev.prev) ev.prev = C.clone(g);
-      ev.clears = groups; ev.contested = true;
-      removeCells(g, groups.flatMap(f => f.cells));
+      const cells = groups.flatMap(f => f.cells);
+      ev.petrify = cells; ev.contested = true;
+      petrify(g, cells);
       g.pending = null;
-      g.note = "Contested! Both fours cancel out.";
+      g.note = "Contested! Both fours cancel out and turn to stone.";
       return settle(g, mover, ev, now, depth + 1);
     }
     if (pend) { // same player made another four inside the window: it counts too
@@ -68,7 +82,7 @@
     if (g.sudden && a !== b) finish(g, a > b ? 1 : 2);
     else if ((a >= TARGET || b >= TARGET) && a !== b) finish(g, a > b ? 1 : 2);
     if (!g.over && !g.pending && C.isFull(g)) {
-      g.grid = C.blank(0); g.anc = C.blank(false); g.last = null; ev.wipe = true;
+      g.grid = C.blank(0); g.anc = C.blank(false); g.last = null; g.bombs = []; ev.wipe = true;
       g.note += " Board full, so it was wiped.";
     }
   }
@@ -80,12 +94,12 @@
   function drop(g, seat, c, now) {
     if (g.over) return "The match is over.";
     if (!gcdFree(g, seat, now)) return "Too fast.";
-    if (!isReady(g, seat, "drop", now)) return "Drop is cooling down.";
+    if (chargesAt(g, seat, now).n < 1) return "No drop charges left.";
     if (c < 0 || c >= COLS || C.topEmpty(g, c) < 0) return `Column ${L[c] || "?"} is full.`;
     if (frozenFor(g, seat, c, now)) return `Column ${L[c]} is frozen.`;
     const r = C.topEmpty(g, c);
     g.grid[r][c] = seat; g.last = { r, c };
-    g.ready[seat].drop = now + DROP_CD * mult(g);
+    spendCharge(g, seat, now);
     g.ready[seat].gcd = now + GCD;
     const ev = { type: "drop", r, c };
     g.note = `Player ${seat} dropped in ${L[c]}.`;
@@ -112,8 +126,9 @@
     if (id === "block") { const r = C.topEmpty(g, c); g.grid[r][c] = 3; g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} placed a stone in ${L[c]}.`; }
     if (id === "freeze") { g.frozen = g.frozen.filter(f => f.until > now); g.frozen.push({ col: c, player: opp(p), until: now + FREEZE_MS }); ev = { type: "freeze", c }; note = `Player ${p} froze column ${L[c]}.`; }
     if (id === "lift") { const t2 = C.topDisc(g, c); ev = { type: "lift", r: t2, c, v: g.grid[t2][c] }; g.grid[t2][c] = 0; g.anc[t2][c] = false; note = `Player ${p} lifted a disc from ${L[c]}.`; }
-    if (id === "pop") { ev = { type: "pop", c, prev: C.clone(g) }; const f = C.floorRow(g); g.grid[f][c] = 0; g.anc[f][c] = false; C.writeStack(g, c, C.stack(g, c)); g.last = null; note = `Player ${p} popped column ${L[c]}.`; }
-    if (id === "flip") { ev = { type: "flip", c, prev: C.clone(g) }; C.writeStack(g, c, C.stack(g, c).reverse()); g.last = null; note = `Player ${p} flipped column ${L[c]}.`; }
+    if (id === "pop") { ev = { type: "pop", c, prev: C.clone(g) }; const f = C.floorRow(g); g.grid[f][c] = 0; g.anc[f][c] = false; C.compactCol(g, c); g.last = null; note = `Player ${p} popped column ${L[c]}.`; }
+    if (id === "reinforce") { ev = C.reinforce(g, c, p); note = `Player ${p} reinforced column ${L[c]}.`; }
+    if (id === "flip") { ev = { type: "flip", c, prev: C.clone(g) }; C.flipCol(g, c); g.last = null; note = `Player ${p} flipped column ${L[c]}.`; }
     if (id === "anchor") { g.anc[a.r][a.c] = true; ev = { type: "anchor", r: a.r, c: a.c }; note = `Player ${p} anchored a disc.`; }
     if (id === "swap") {
       [g.grid[a.r][a.c], g.grid[a.r2][a.c2]] = [g.grid[a.r2][a.c2], g.grid[a.r][a.c]];
@@ -121,7 +136,7 @@
     }
     if (id === "grenade") { const r = C.topEmpty(g, c); C.placeGrenade(g, r, c, now); g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} dropped a grenade in ${L[c]}.`; }
     if (id === "gravity") { ev = { type: "gravity", prev: C.clone(g) }; C.flipGravity(g); note = `Player ${p} flipped gravity. Discs now fall ${C.up(g) ? "up" : "down"}.`; }
-    if (id === "double") { g.ready[p].drop = 0; ev = { type: "double" }; note = `Player ${p} reset their drop cooldown.`; }
+    if (id === "double") { g.charges[p] = { n: MAX_CHARGES, next: 0 }; ev = { type: "double" }; note = `Player ${p} refilled their drop charges.`; }
     g.ready[p][id] = now + CD[id] * mult(g);
     g.ready[p].gcd = now + GCD;
     g.note = note;
@@ -142,17 +157,16 @@
       const ev = C.detonate(g, due.id);
       if (ev) {
         g.note = "A grenade exploded.";
-        const pre = { prev: ev.prev, clears: ev.clears };
         settle(g, 1, ev, now);
-        if (!ev.contested) Object.assign(ev, pre);
         g.ev = ev; g.seq++;
         return true;
       }
     }
     if (g.pending && now >= g.pending.until) {
       const pd = g.pending; g.pending = null;
-      const ev = { type: "score", prev: C.clone(g), clears: [{ p: pd.p, cells: pd.cells.filter(k => { const [r, c] = k.split(",").map(Number); return g.grid[r][c] === pd.p; }) }] };
-      removeCells(g, ev.clears[0].cells);
+      const cells = pd.cells.filter(k => { const [r, c] = k.split(",").map(Number); return g.grid[r][c] === pd.p; });
+      const ev = { type: "score", p: pd.p, petrify: cells };
+      petrify(g, cells);
       g.score[pd.p] += pd.count;
       g.note = `Player ${pd.p} scored!`;
       settle(g, pd.p, ev, now);
@@ -164,7 +178,10 @@
       if (a !== b) finish(g, a > b ? 1 : 2);
       else {
         g.sudden = true;
-        for (const s of [1, 2]) for (const k in g.ready[s]) g.ready[s][k] = Math.min(g.ready[s][k], now + (g.ready[s][k] - now) * 0.25);
+        for (const s of [1, 2]) {
+          for (const k in g.ready[s]) g.ready[s][k] = Math.min(g.ready[s][k], now + (g.ready[s][k] - now) * 0.25);
+          const ch = chargesAt(g, s, now); g.charges[s] = { n: ch.n, next: ch.next ? now + (ch.next - now) * 0.25 : 0 };
+        }
         g.note = "Time! Sudden death: cooldowns cut to 1/4. Next score wins.";
       }
       g.ev = { type: g.over ? "end" : "sudden" }; g.seq++;
@@ -173,6 +190,6 @@
     return false;
   }
 
-  const api = { GCD, gcdFree, CONTEST_MS, DROP_CD, MATCH_MS, TARGET, FREEZE_MS, CD, DESC, newGame, canDrop, drop, ability, tick, isReady, frozenFor };
+  const api = { MAX_CHARGES, chargesAt, GCD, gcdFree, CONTEST_MS, DROP_CD, MATCH_MS, TARGET, FREEZE_MS, CD, DESC, newGame, canDrop, drop, ability, tick, isReady, frozenFor };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.RT = api;
 })(typeof window !== "undefined" ? window : globalThis);

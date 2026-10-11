@@ -239,6 +239,18 @@ details ul{padding-left:18px;margin:8px 0 0}
 .modal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(8,10,14,.7);padding-inline:16px}
 .modal .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:10px;width:min(320px,100%);text-align:center}
 @media (prefers-reduced-motion:reduce){.rise,.board.grav1{animation:none}}
+
+/* Fixed stone (Full Auto scored four): dark, riveted, clearly not a disc */
+.d5{border-radius:22%;inset:5%;background:linear-gradient(145deg,#59606c,#373c45 55%,#262a31);box-shadow:inset 0 0 0 2px #1d2026,inset 0 2px 0 rgba(255,255,255,.12)}
+.d5::before{content:"";position:absolute;inset:22%;border-radius:50%;background:radial-gradient(circle,#6f7785 0 18%,transparent 20%) 0 0/50% 50%;opacity:.6}
+.disc.petrify{animation:petrify .85s ease-out}
+@keyframes petrify{0%{filter:brightness(2.4) sepia(1) saturate(4) hue-rotate(5deg);transform:scale(1.25);box-shadow:0 0 0 3px var(--gold),0 0 22px 6px var(--gold)}60%{filter:brightness(1.4);transform:scale(1.05)}100%{filter:none;transform:none}}
+/* Reinforce: the stack is shoved one step away from the floor */
+.disc.push{animation:push .4s cubic-bezier(.2,.8,.3,1)}
+@keyframes push{from{transform:translateY(var(--push))}to{transform:none}}
+.disc.petrify,.disc.push{animation-delay:var(--ad,0s)}
+.dropbar.empty{border-color:var(--danger)}
+@media (prefers-reduced-motion:reduce){.disc.petrify,.disc.push{animation:none}}
 </style>
 </head>
 <body>

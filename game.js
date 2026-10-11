@@ -11,6 +11,7 @@
     double: { name: "Double Drop", cost: 4, t: "none", desc: "Drop a second disc in another column. It can't complete a 4." },
     flip:   { name: "Flip",        cost: 5, t: "col",  desc: "Invert one column top to bottom." },
     grenade:{ name: "Grenade",     cost: 3, t: "col",  desc: "Drop a grenade. After 2 seconds it explodes, destroying the discs directly above, below, left and right of it." },
+    reinforce:{ name: "Reinforce", cost: 3, t: "col",  desc: "Slide your disc into the floor end of a column, pushing the stack away from the floor." },
     gravity:{ name: "Gravity Flip", cost: 6, t: "none", desc: "Reverse gravity. All discs fly to the other side, and new discs come from there until it's flipped again." }
   };
   const opp = p => 3 - p;
@@ -29,31 +30,48 @@
   }
 
   // g.gdir: 1 = gravity down (default), -1 = gravity up (discs rest against the top, new discs rise from below).
+  // Value 5 is a fixed stone (Full Auto scored four): it never moves, and discs stack against it.
+  const FIXED = 5;
   const up = g => g.gdir === -1;
   const floorRow = g => (up(g) ? 0 : ROWS - 1);
-  // Where the next disc lands in column c (-1 when full).
+  // Where the next disc lands in column c: it travels in from the entry side until something blocks it (-1 when blocked at once).
   const topEmpty = (g, c) => {
-    if (up(g)) { for (let r = 0; r < ROWS; r++) if (!g.grid[r][c]) return r; return -1; }
-    for (let r = ROWS - 1; r >= 0; r--) if (!g.grid[r][c]) return r; return -1;
+    if (up(g)) { if (g.grid[ROWS - 1][c]) return -1; let r = ROWS - 1; while (r - 1 >= 0 && !g.grid[r - 1][c]) r--; return r; }
+    if (g.grid[0][c]) return -1; let r = 0; while (r + 1 < ROWS && !g.grid[r + 1][c]) r++; return r;
   };
-  // The outermost disc of the stack (the one a new disc would land on).
+  // The first occupied cell met from the entry side.
   const topDisc = (g, c) => {
     if (up(g)) { for (let r = ROWS - 1; r >= 0; r--) if (g.grid[r][c]) return r; return -1; }
     for (let r = 0; r < ROWS; r++) if (g.grid[r][c]) return r; return -1;
   };
   const isFull = g => { for (let c = 0; c < COLS; c++) if (topEmpty(g, c) >= 0) return false; return true; };
   const count = (g, c) => g.grid.reduce((n, row) => n + (row[c] ? 1 : 0), 0);
-  // Discs in column c, listed from the floor outward.
-  function stack(g, c) {
-    const s = [];
-    if (up(g)) { for (let r = 0; r < ROWS; r++) if (g.grid[r][c]) s.push([g.grid[r][c], g.anc[r][c]]); }
-    else for (let r = ROWS - 1; r >= 0; r--) if (g.grid[r][c]) s.push([g.grid[r][c], g.anc[r][c]]);
-    return s;
+  // Stretches of a column between fixed stones, as [lo, hi] row ranges.
+  function segs(g, c) {
+    const out = []; let lo = null;
+    for (let r = 0; r <= ROWS; r++) {
+      const wall = r === ROWS || g.grid[r][c] === FIXED;
+      if (!wall && lo === null) lo = r;
+      if (wall && lo !== null) { out.push([lo, r - 1]); lo = null; }
+    }
+    return out;
   }
-  function writeStack(g, c, s) {
-    for (let r = 0; r < ROWS; r++) { g.grid[r][c] = 0; g.anc[r][c] = false; }
-    s.forEach(([v, a], i) => { const r = up(g) ? i : ROWS - 1 - i; g.grid[r][c] = v; g.anc[r][c] = a; });
+  const segRows = (g, [lo, hi]) => { const rs = []; if (up(g)) for (let r = lo; r <= hi; r++) rs.push(r); else for (let r = hi; r >= lo; r--) rs.push(r); return rs; };
+  // Movable discs in a stretch, floor side first.
+  const segStack = (g, c, sg) => segRows(g, sg).filter(r => g.grid[r][c]).map(r => [g.grid[r][c], g.anc[r][c]]);
+  function writeSeg(g, c, sg, list) {
+    const rs = segRows(g, sg);
+    rs.forEach(r => { g.grid[r][c] = 0; g.anc[r][c] = false; });
+    list.forEach(([v, a], i) => { g.grid[rs[i]][c] = v; g.anc[rs[i]][c] = a; });
   }
+  // Let every movable disc in a column settle toward the floor (fixed stones stay put).
+  function compactCol(g, c) { for (const sg of segs(g, c)) writeSeg(g, c, sg, segStack(g, c, sg)); }
+  function flipCol(g, c) { for (const sg of segs(g, c)) writeSeg(g, c, sg, segStack(g, c, sg).reverse()); }
+  // The stretch touching the floor, or null when a fixed stone sits on the floor.
+  const floorSeg = (g, c) => segs(g, c).find(([lo, hi]) => floorRow(g) >= lo && floorRow(g) <= hi) || null;
+  // Legacy whole-column helpers (no fixed stones in play).
+  function stack(g, c) { return segs(g, c).length === 1 ? segStack(g, c, segs(g, c)[0]) : []; }
+  function writeStack(g, c, s) { const sg = [0, ROWS - 1]; writeSeg(g, c, sg, s); }
   function lines(g, p) {
     const out = new Set(), D = [[0, 1], [1, 0], [1, 1], [1, -1]];
     for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) for (const [dr, dc] of D) {
@@ -141,6 +159,7 @@
       case "lift": { const t = topDisc(g, c); return t >= 0 && g.grid[t][c] === p; }
       case "pop": { const f = floorRow(g); return g.grid[f][c] === opp(p) && !g.anc[f][c]; }
       case "flip": return count(g, c) >= 2;
+      case "reinforce": { const sg = floorSeg(g, c); return !!sg && segStack(g, c, sg).length < sg[1] - sg[0] + 1; }
     }
     return false;
   }
@@ -190,8 +209,9 @@
     if (id === "block") { const r = topEmpty(g, c); g.grid[r][c] = 3; g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} placed a stone in ${L[c]}.`; }
     if (id === "freeze") { g.frozen = { col: c, player: opp(p) }; ev = { type: "freeze", c }; note = `Player ${p} froze column ${L[c]}.`; }
     if (id === "lift") { const t2 = topDisc(g, c); ev = { type: "lift", r: t2, c, v: g.grid[t2][c] }; g.grid[t2][c] = 0; g.anc[t2][c] = false; note = `Player ${p} lifted a disc from ${L[c]}.`; }
-    if (id === "pop") { ev = { type: "pop", c, prev: clone(g) }; const f = floorRow(g); g.grid[f][c] = 0; g.anc[f][c] = false; writeStack(g, c, stack(g, c)); g.last = null; note = `Player ${p} popped column ${L[c]}.`; }
-    if (id === "flip") { ev = { type: "flip", c, prev: clone(g) }; writeStack(g, c, stack(g, c).reverse()); g.last = null; note = `Player ${p} flipped column ${L[c]}.`; }
+    if (id === "pop") { ev = { type: "pop", c, prev: clone(g) }; const f = floorRow(g); g.grid[f][c] = 0; g.anc[f][c] = false; compactCol(g, c); g.last = null; note = `Player ${p} popped column ${L[c]}.`; }
+    if (id === "reinforce") { ev = reinforce(g, c, p); note = `Player ${p} reinforced column ${L[c]}.`; }
+    if (id === "flip") { ev = { type: "flip", c, prev: clone(g) }; flipCol(g, c); g.last = null; note = `Player ${p} flipped column ${L[c]}.`; }
     if (id === "anchor") { g.anc[a.r][a.c] = true; ev = { type: "anchor", r: a.r, c: a.c }; note = `Player ${p} anchored a disc.`; }
     if (id === "swap") {
       [g.grid[a.r][a.c], g.grid[a.r2][a.c2]] = [g.grid[a.r2][a.c2], g.grid[a.r][a.c]];
@@ -226,7 +246,7 @@
       if (inB(rr, cc) && g.grid[rr][cc] && g.grid[rr][cc] !== 4) cells.push(rr + "," + cc);
     }
     for (const k of cells) { const [a, b] = k.split(",").map(Number); g.grid[a][b] = 0; g.anc[a][b] = false; }
-    for (let cc = 0; cc < COLS; cc++) writeStack(g, cc, stack(g, cc));
+    for (let cc = 0; cc < COLS; cc++) compactCol(g, cc);
     g.last = null;
     return { type: "boom", r, c, prev, clears: [{ p: 0, cells }] };
   }
@@ -245,10 +265,19 @@
 
   // Reverse gravity: every disc slides to the other side (keeping its order) and new discs come from that side.
   function flipGravity(g) {
-    const stacks = [...Array(COLS).keys()].map(c => stack(g, c).reverse());
+    const before = [...Array(COLS).keys()].map(c => segs(g, c).map(sg => [sg, segStack(g, c, sg).reverse()]));
     g.gdir = up(g) ? 1 : -1;
-    stacks.forEach((s, c) => writeStack(g, c, s));
+    before.forEach((list, c) => list.forEach(([sg, s]) => writeSeg(g, c, sg, s)));
     g.last = null;
+  }
+
+  // Insert the player's disc at the floor end of the column, pushing the stretch's discs one step away from the floor.
+  function reinforce(g, c, p) {
+    const sg = floorSeg(g, c), list = segStack(g, c, sg);
+    const ev = { type: "reinforce", c, n: list.length + 1, gdir: g.gdir || 1 };
+    writeSeg(g, c, sg, [[p, false], ...list]);
+    g.last = { r: floorRow(g), c };
+    return ev;
   }
 
   function timeout(g) {
@@ -261,6 +290,7 @@
   }
 
   const api = { ROWS, COLS, MAXE, TURN_S, L, AB, opp, newGame, canDrop, drop, ability, timeout, validCol, validCell, hasTarget, abilityReady, count,
+    FIXED, segs, compactCol, flipCol, reinforce, floorSeg,
     lines, topEmpty, topDisc, floorRow, isFull, flipGravity, up, stack, writeStack, clone, partner, blank, placeGrenade, detonate, tickBombs, FUSE_MS };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.CW = api;
 })(typeof window !== "undefined" ? window : globalThis);
