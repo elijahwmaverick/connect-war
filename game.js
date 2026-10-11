@@ -1,6 +1,6 @@
 // Connect War rules engine. Shared by the server (authoritative) and the browser (for highlighting targets).
 (function (root) {
-  const ROWS = 7, COLS = 8, MAXE = 5, TURN_S = 15, L = "ABCDEFGH";
+  const ROWS = 7, COLS = 8, MAXE = 7, TURN_S = 20, L = "ABCDEFGH";
   const AB = {
     block:  { name: "Block",       cost: 2, t: "col",  desc: "Drop a neutral stone that counts for no one." },
     freeze: { name: "Freeze",      cost: 2, t: "col",  desc: "Lock a column for the opponent's next turn." },
@@ -168,13 +168,14 @@
     const c = a.c;
     let ev = { type: id }, note = "";
     if (id === "block") { const r = topEmpty(g, c); g.grid[r][c] = 3; g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} placed a stone in ${L[c]}.`; }
-    if (id === "freeze") { g.frozen = { col: c, player: opp(p) }; note = `Player ${p} froze column ${L[c]}.`; }
-    if (id === "lift") { const t2 = topDisc(g, c); g.grid[t2][c] = 0; g.anc[t2][c] = false; note = `Player ${p} lifted a disc from ${L[c]}.`; }
-    if (id === "pop") { g.grid[ROWS - 1][c] = 0; g.anc[ROWS - 1][c] = false; writeStack(g, c, stack(g, c)); g.last = null; note = `Player ${p} popped column ${L[c]}.`; }
+    if (id === "freeze") { g.frozen = { col: c, player: opp(p) }; ev = { type: "freeze", c }; note = `Player ${p} froze column ${L[c]}.`; }
+    if (id === "lift") { const t2 = topDisc(g, c); ev = { type: "lift", r: t2, c, v: g.grid[t2][c] }; g.grid[t2][c] = 0; g.anc[t2][c] = false; note = `Player ${p} lifted a disc from ${L[c]}.`; }
+    if (id === "pop") { ev = { type: "pop", c, prev: clone(g) }; g.grid[ROWS - 1][c] = 0; g.anc[ROWS - 1][c] = false; writeStack(g, c, stack(g, c)); g.last = null; note = `Player ${p} popped column ${L[c]}.`; }
     if (id === "flip") { ev = { type: "flip", c, prev: clone(g) }; writeStack(g, c, stack(g, c).reverse()); g.last = null; note = `Player ${p} flipped column ${L[c]}.`; }
-    if (id === "anchor") { g.anc[a.r][a.c] = true; note = `Player ${p} anchored a disc.`; }
+    if (id === "anchor") { g.anc[a.r][a.c] = true; ev = { type: "anchor", r: a.r, c: a.c }; note = `Player ${p} anchored a disc.`; }
     if (id === "swap") {
       [g.grid[a.r][a.c], g.grid[a.r2][a.c2]] = [g.grid[a.r2][a.c2], g.grid[a.r][a.c]];
+      ev = { type: "swap", r: a.r, c: a.c, r2: a.r2, c2: a.c2 };
       g.last = null; note = `Player ${p} swapped two discs.`;
     }
     if (id === "double") { g.dd = true; g.dropsLeft = 2; note = `Player ${p} used Double Drop.`; }

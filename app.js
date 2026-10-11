@@ -166,7 +166,7 @@ function handle(seat, type, p) {
     if (type === "drop") e = CW.drop(g, Number(p.c));
     else e = CW.ability(g, { id: p.id, c: Number(p.c), r: Number(p.r), r2: Number(p.r2), c2: Number(p.c2) }, room.picks[seat]);
     if (e) return e;
-    if (g.over) { clearTimer(); room.deadline = null; } else armTimer(type === "ability" && p.id === "flip" ? 700 : 0);
+    if (g.over) { clearTimer(); room.deadline = null; } else armTimer(type === "ability" && (p.id === "flip" || p.id === "pop") ? 700 : 0);
     return null;
   }
   return "Unknown action.";
@@ -252,8 +252,9 @@ function onView(v) {
   if (g) {
     if (g.seq !== lastSeq) {
       if (lastSeq !== -1 && g.ev) {
-        if (g.ev.type === "drop" || g.ev.type === "block") anim = { r: g.ev.r, c: g.ev.c };
-        if (g.ev.type === "flip") flip = { c: g.ev.c, prev: g.ev.prev, phase: 1 };
+        const t = g.ev.type;
+        if (t === "flip" || t === "pop") flip = { type: t, c: g.ev.c, prev: g.ev.prev, phase: 1 };
+        else anim = { ...g.ev, type: t === "block" ? "drop" : t };
       }
       mode = null; swapSel = null; localMsg = "";
       if (g.over && !lastOver) {
@@ -275,14 +276,14 @@ function onView(v) {
   if (flip && flip.phase === 1) {
     busy = true; render();
     const f = flip;
-    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, 560);
+    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : 560);
   } else render();
 }
 
 setInterval(() => {
   const t = document.getElementById("tnum");
   if (!t || timeLeft == null) return;
-  const s = Math.max(0, Math.ceil((timeLeft - (Date.now() - timeAt)) / 1000));
+  const s = Math.min(TURN_S, Math.max(0, Math.ceil((timeLeft - (Date.now() - timeAt)) / 1000)));
   t.textContent = s + "s";
   document.getElementById("tfill").style.width = Math.min(100, s / TURN_S * 100) + "%";
   document.querySelector(".timer").classList.toggle("warn", s <= 5);
@@ -313,7 +314,7 @@ function renderHome() {
   <section class="setup">
     <h2>Play online</h2>
     <p class="muted">Create a game and send the code or link to your opponent. Keep this page open while you host.</p>
-    <label class="tog"><input type="checkbox" id="timerOn" ${timerOn ? "checked" : ""}> 15-second turn clock</label>
+    <label class="tog"><input type="checkbox" id="timerOn" ${timerOn ? "checked" : ""}> 20-second turn clock</label>
     <button class="primary" data-act="create">Create game</button>
     <div class="divider">OR</div>
     <form class="field" id="joinForm"><input id="code" maxlength="4" placeholder="CODE" autocomplete="off" aria-label="Game code" value="${waiting ? code : ""}"><button class="primary" type="submit">Join</button></form>
@@ -393,6 +394,7 @@ function statusText() {
   const note = g.note ? g.note.replace(new RegExp(`Player ${V.seat}`, "g"), "You").replace(new RegExp(`Player ${opp(V.seat)}`, "g"), "Opponent") + " " : "";
   if (g.cur === V.seat) {
     if (g.dd && g.dropsMade === 1) return note + "Place your second disc in a different column. It can't complete a 4.";
+    if (g.abilityUsed && g.dropsMade === 0 && !g.dd) return note + "<b>Your turn</b>: now drop a disc.";
     return note + "<b>Your turn</b>: drop a disc, or use an ability first.";
   }
   return note + "Opponent's turn.";
@@ -420,7 +422,8 @@ function renderPlay() {
   let cols = "";
   for (let c = 0; c < COLS; c++) {
     let cls = "col";
-    if (flip && flip.phase === 1 && flip.c === c) cls += " flip1";
+    if (flip && flip.phase === 1 && flip.type === "flip" && flip.c === c) cls += " flip1";
+    if (anim && anim.type === "freeze" && anim.c === c) cls += " frz-in";
     if (myTurn) {
       if (mt === "col" && CW.validCol(g, mode, c)) cls += " tgt";
       else if (!mode && CW.canDrop(g, c)) cls += " can";
@@ -434,26 +437,37 @@ function renderPlay() {
       const wi = wins.get(r + "," + c);
       if (wi !== undefined) cc += " win";
       let disc = "";
+      const at = (rr, cc2) => rr === r && cc2 === c;
       if (v) {
-        let n = 0;
-        if (anim && anim.r === r && anim.c === c) n = r + 1;
-        if (flip && flip.phase === 2 && flip.c === c) n = ROWS - CW.count(g, c);
+        let n = 0, extra = "", style = "";
+        if (anim && anim.type === "drop" && at(anim.r, anim.c)) n = r + 1;
+        if (flip && flip.phase === 2 && flip.c === c) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
+        if (n) { extra += " fall"; style = `--from:calc(${-n} * (116.3% + 3px));`; }
+        if (flip && flip.phase === 1 && flip.type === "pop" && flip.c === c && r === ROWS - 1) extra += " burst";
+        if (anim && anim.type === "anchor" && at(anim.r, anim.c)) extra += " anc-in";
+        if (anim && anim.type === "swap") {
+          const from = at(anim.r, anim.c) ? [anim.r2, anim.c2] : at(anim.r2, anim.c2) ? [anim.r, anim.c] : null;
+          if (from) { extra += " slide"; style += `--sx:calc(${from[1] - c} * (116.3% + 7px));--sy:calc(${from[0] - r} * (116.3% + 3px));`; }
+        }
         const lst = g.last && g.last.r === r && g.last.c === c && !g.over;
-        disc = `<div class="disc d${v} ${shown.anc[r][c] ? "anc" : ""} ${n ? "fall" : ""} ${lst ? "last" : ""}" ${n ? `style="--from:calc(${-n} * (116.3% + 3px))"` : ""}></div>`;
+        disc = `<div class="disc d${v} ${shown.anc[r][c] ? "anc" : ""}${extra} ${lst ? "last" : ""}" ${style ? `style="${style}"` : ""}></div>`;
+      } else if (anim && anim.type === "lift" && at(anim.r, anim.c)) {
+        disc = `<div class="disc d${anim.v} lift-out"></div>`;
       }
       const wd = wi !== undefined ? `style="--wd:${(0.3 + wi * 0.15).toFixed(2)}s"` : "";
       cells += `<div class="${cc}" data-r="${r}" data-c="${c}" ${wd}>${disc}</div>`;
     }
     cols += `<div class="${cls}" role="button" aria-label="Column ${L[c]}">${cells}</div>`;
   }
+  const ddFlash = anim && anim.type === "double";
   anim = null;
   const mine = V.myPicks || [];
   const tray = g.over ? "" : `<div class="tray">${mine.map(id => {
     const a = AB[id], ready = myTurn && CW.abilityReady(g, id, mine);
     return `<button class="ab ${mode === id ? "armed" : ""}" data-ab="${id}" ${ready || mode === id ? "" : "disabled"} title="${a.desc}">
-      <span class="an">${a.name}</span><span class="ac">${a.cost} EN${mode === id ? " · tap to cancel" : ""}</span></button>`;
+      <span class="an">${a.name}</span><span class="ac">${a.cost} EN${mode === id ? " · tap to cancel" : ""}</span><span class="ad">${a.desc}</span></button>`;
   }).join("")}</div>`;
-  const tl = timeLeft == null ? null : Math.max(0, Math.ceil((timeLeft - (Date.now() - timeAt)) / 1000));
+  const tl = timeLeft == null ? null : Math.min(TURN_S, Math.max(0, Math.ceil((timeLeft - (Date.now() - timeAt)) / 1000)));
   const timer = V.timerOn
     ? `<div class="timer ${tl != null && tl <= 5 ? "warn" : ""}"><div class="tbar"><i id="tfill" style="width:${tl == null ? 0 : tl / TURN_S * 100}%"></i></div><span id="tnum">${tl == null ? "–" : tl + "s"}</span></div>`
     : `<div class="timer off"><span>No clock</span></div>`;
@@ -463,13 +477,13 @@ function renderPlay() {
   ${dc}
   <div class="players">${panel(V.seat)}${panel(opp(V.seat))}</div>
   <p class="status" aria-live="polite">${statusText()}</p>
-  <div class="board-wrap"><div class="board ${g.over && g.result && !(flip && flip.phase === 1) ? "won" : ""}">${cols}</div>${g.over && showOver ? overHtml() : ""}</div>
+  <div class="board-wrap"><div class="board ${g.over && g.result && !(flip && flip.phase === 1) ? "won" : ""} ${ddFlash ? "dd-flash" : ""}">${cols}</div>${g.over && showOver ? overHtml() : ""}</div>
   <div class="letters">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
   ${tray}
   <p class="err">${err}</p>
   <details><summary>Rules</summary><ul>
     <li>Connect 4 in a row on an 8×7 board.</li>
-    <li>Each turn: gain 1 energy (max 5), optionally use one ability, then drop one disc.</li>
+    <li>Each turn: gain 1 energy (max 7), optionally use one ability, then drop one disc.</li>
     <li>Gold ring = anchored disc (immune to Pop and Swap). Striped column = frozen for one player.</li>
     <li>If an ability makes four for both players, the player who used it wins.</li>
     <li>Turn clock timeout: no drop and no energy that turn.</li>

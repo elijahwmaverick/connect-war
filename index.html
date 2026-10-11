@@ -47,7 +47,7 @@ h2{font-family:var(--fd);font-size:22px;margin:0;text-wrap:balance}
 .pl .nm b{color:var(--pc)}
 .pl .turn{font-size:11px;color:var(--bg);background:var(--pc);padding:1px 6px;border-radius:4px}
 .pips{display:flex;gap:3px;align-items:center}
-.pips i{width:14px;height:8px;border-radius:2px;background:var(--line)}
+.pips i{width:11px;height:8px;border-radius:2px;background:var(--line)}
 .pips i.f{background:var(--pc)}
 .pips span{margin-left:6px;font-family:var(--fd);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .lo{font-size:12px;color:var(--muted);line-height:1.35}
@@ -71,8 +71,32 @@ h2{font-family:var(--fd);font-size:22px;margin:0;text-wrap:balance}
 .d3{background:repeating-linear-gradient(45deg,var(--stone) 0 3px,#4d5460 3px 6px);box-shadow:inset 0 0 0 2px #3c424c}
 .anc::after{content:"";position:absolute;inset:24%;border-radius:50%;border:2px solid var(--gold);box-shadow:0 0 0 2px rgba(0,0,0,.25)}
 .last::before{content:"";position:absolute;left:50%;top:50%;width:18%;height:18%;transform:translate(-50%,-50%);border-radius:50%;background:rgba(255,255,255,.75)}
-.fall{animation:fall .3s cubic-bezier(.5,0,.9,.6)}
-@keyframes fall{from{transform:translateY(var(--from))}to{transform:none}}
+.fall{animation:fall .42s linear}
+@keyframes fall{
+  0%{transform:translateY(var(--from));animation-timing-function:cubic-bezier(.5,0,.9,.6)}
+  70%{transform:translateY(0) scale(1.06,.9);animation-timing-function:ease-out}
+  85%{transform:translateY(-8%) scale(.98,1.03);animation-timing-function:ease-in}
+  100%{transform:none}}
+/* Pop: bottom disc bursts before the column drops */
+.burst{animation:burst .4s ease-out forwards}
+@keyframes burst{30%{transform:scale(1.3);filter:brightness(2)}100%{transform:scale(1.6);opacity:0;filter:brightness(2.5)}}
+/* Lift: disc rises out of the board */
+.lift-out{animation:liftout .55s cubic-bezier(.3,0,.7,1) forwards}
+@keyframes liftout{20%{transform:scale(1.1)}100%{transform:translateY(-320%) scale(.8);opacity:0}}
+/* Swap: discs slide past each other */
+.slide{animation:slide .45s cubic-bezier(.4,0,.2,1);z-index:3}
+@keyframes slide{from{transform:translate(var(--sx),var(--sy)) scale(1.1)}to{transform:none}}
+/* Anchor: gold ring stamps down */
+.anc-in::after{animation:stamp .5s cubic-bezier(.3,1.5,.5,1)}
+.anc-in{animation:thud .5s ease-out}
+@keyframes stamp{from{transform:scale(2.6);opacity:0}to{transform:none;opacity:1}}
+@keyframes thud{40%{transform:scale(.9)}100%{transform:none}}
+/* Freeze: frost sweeps down the column */
+.col.frz-in::after{animation:frost .6s ease-out}
+@keyframes frost{from{clip-path:inset(0 0 100% 0);filter:brightness(2.5)}to{clip-path:inset(0 0 0 0)}}
+/* Double Drop: gold pulse around the board */
+.board.dd-flash{animation:ddflash .7s ease-out}
+@keyframes ddflash{0%{box-shadow:inset 0 -5px 0 var(--board-edge),0 0 0 0 var(--gold)}35%{box-shadow:inset 0 -5px 0 var(--board-edge),0 0 0 4px var(--gold),0 0 24px 6px rgba(242,193,78,.5)}100%{box-shadow:inset 0 -5px 0 var(--board-edge),0 0 0 0 transparent}}
 .board.won .cell:not(.win) .disc{opacity:.28;filter:grayscale(.6);transition:opacity .4s,filter .4s}
 .cell.win{z-index:1}
 .cell.win::after{content:"";position:absolute;inset:-2px;border-radius:50%;box-shadow:0 0 0 3px var(--gold),0 0 18px 4px var(--gold);opacity:0;animation:ring .3s ease-out forwards;animation-delay:var(--wd)}
@@ -88,6 +112,8 @@ h2{font-family:var(--fd);font-size:22px;margin:0;text-wrap:balance}
 .ab{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 8px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:4px;min-width:0}
 .ab .an{font-family:var(--fd);font-weight:600;font-size:14px;letter-spacing:.04em}
 .ab .ac{font-family:var(--fd);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.ab .ad{font-size:12px;line-height:1.3;color:var(--muted)}
+.ab{justify-content:flex-start}
 .ab:disabled{opacity:.38;cursor:not-allowed}
 .ab.armed{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold) inset}
 .ghost{background:transparent;border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer;font-family:var(--fd);font-weight:600;letter-spacing:.06em;text-transform:uppercase;font-size:13px;width:100%}
@@ -121,7 +147,7 @@ h2{font-family:var(--fd);font-size:22px;margin:0;text-wrap:balance}
 details{color:var(--muted);font-size:14px;line-height:1.45}
 summary{cursor:pointer;font-family:var(--fd);letter-spacing:.08em;text-transform:uppercase;font-size:12px}
 details ul{padding-left:18px;margin:8px 0 0}
-@media (prefers-reduced-motion:reduce){.fall,.cell.win .disc,.col.flip1{animation:none}}
+@media (prefers-reduced-motion:reduce){.fall,.cell.win .disc,.col.flip1,.burst,.slide,.anc-in,.anc-in::after,.col.frz-in::after,.board.dd-flash{animation:none}.lift-out{display:none}}
 </style>
 </head>
 <body>
