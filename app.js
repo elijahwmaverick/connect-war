@@ -1098,7 +1098,7 @@ function renderPlay() {
     <li>A full board with no four is wiped.</li></ul></details>` : `<details><summary>Rules</summary><ul>
     <li>Each four in a row scores a point and turns into fixed stones. First to ${CW.TARGET} fours wins.</li>
     <li>A drop smashes the first fixed stone it lands on and keeps falling. A full board is wiped.</li>
-    <li>Using a Grenade or Insert ends your turn.</li>
+    <li>Using Grenade, Insert, Stone Flask or Reinforce ends your turn.</li>
     <li>Each turn: gain 1 energy (max 7), optionally use one ability, then drop one disc.</li>
     <li>Gold ring = anchored disc (immune to Pop and Swap). Striped column = frozen for one player.</li>
     <li>If one move gives two players their winning four, the player who moved wins.</li>
