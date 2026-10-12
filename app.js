@@ -6,6 +6,8 @@ const { MAXE, TURN_S, AB, opp } = CW;
 let ROWS = 7, COLS = 8, L = "ABCDEFGH";
 function syncDims(g) { const r = (g && g.rows) || 7, c = (g && g.cols) || 8; CW.setDims(r, c); ROWS = r; COLS = c; L = CW.L; }
 let playerCount = 2;
+const APP_VERSION = window.CW_VERSION || "dev";
+let updateReady = null; // newer version detected while in a game
 // Player name (required before playing) and HTML escaping for anything other players typed.
 let myName = (store("cw_name") || "").slice(0, 16);
 const esc = t => String(t == null ? "" : t).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -46,7 +48,11 @@ function openChannel(c, host) {
     .on("broadcast", { event: "closed" }, () => {
       if (!isHost) { leaveLocal(); err = "The host closed the game."; render(); }
     })
-    .on("broadcast", { event: "hello" }, ({ payload }) => { if (isHost) hostHello(payload.token, payload.name); })
+    .on("broadcast", { event: "hello" }, ({ payload }) => {
+      if (!isHost) return;
+      if (payload.v !== APP_VERSION) { send("reject", { to: payload.token, reason: "That game is on a different version. Both players: go to the main menu to update, then try again." }); return; }
+      hostHello(payload.token, payload.name);
+    })
     .on("broadcast", { event: "action" }, ({ payload }) => { if (isHost) hostAction(payload); })
     .on("presence", { event: "sync" }, () => {
       const was = peerOnline;
@@ -83,11 +89,14 @@ function sayHello() {
   let tries = 0;
   const knock = () => {
     if (V) { clearInterval(joinTimer); joinTimer = null; return; }
-    send("hello", { token, name: myName });
-    if (++tries === 3) { err = `Waiting for the host of game ${code} to come online…`; render(); }
+    send("hello", { token, name: myName, v: APP_VERSION });
+    if (++tries === 6) { err = "The host isn't responding yet. Still trying…"; render(); }
   };
+  // Knock quickly at first (a lost first message shouldn't cost seconds), then back off.
   knock();
-  joinTimer = setInterval(knock, 2000);
+  const quick = setTimeout(() => { if (!V) knock(); }, 400);
+  joinTimer = setInterval(knock, 900);
+  setTimeout(() => clearTimeout(quick), 500);
 }
 
 /* ================= matchmaking ================= */
@@ -118,7 +127,7 @@ function startMatchmaking() {
   stopMatchmaking();
   err = "";
   mm = { mode: gameMode, since: Date.now(), count: 1, done: false };
-  const ch = sb.channel("cw-mm-" + gameMode, { config: { broadcast: { self: false }, presence: { key: token } } });
+  const ch = sb.channel("cw-mm-" + APP_VERSION + "-" + gameMode, { config: { broadcast: { self: false }, presence: { key: token } } });
   mm.ch = ch;
   ch.on("presence", { event: "sync" }, () => mmTick())
     .on("broadcast", { event: "invite" }, ({ payload }) => {
@@ -339,31 +348,44 @@ const randomCode = () => Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(M
 /* ================= lobby directory ================= */
 // Open lobbies are advertised on the presence channel "cw-lobbies"; Find lobby lists them.
 let dir = null; // { ch, list, hosting }
+// One lobby-list connection for the whole session (re-creating it quickly can leave the list empty).
 function dirOpen() {
   if (!sb) return null;
   if (dir) return dir;
   const ch = sb.channel("cw-lobbies", { config: { presence: { key: token } } });
-  dir = { ch, list: [], ready: false, meta: null };
+  dir = { ch, list: [], ready: false, meta: null, tracked: false };
   ch.on("presence", { event: "sync" }, () => {
-    if (!dir) return;
-    dir.list = Object.values(ch.presenceState()).flat().filter(l => l.code && l.open && l.token !== token)
+    dir.ready = true;
+    dir.list = Object.values(ch.presenceState()).flat()
+      .filter(l => l.code && l.open && l.token !== token && l.v === APP_VERSION)
       .sort((a, b) => b.created - a.created);
     if (!V && homeScreen === "browse") render();
   }).subscribe(async status => {
-    if (status === "SUBSCRIBED" && dir) { dir.ready = true; if (dir.meta) await ch.track(dir.meta); if (!V && homeScreen === "browse") render(); }
+    if (status === "SUBSCRIBED") {
+      dir.ready = true;
+      if (dir.meta) { await ch.track(dir.meta); dir.tracked = true; }
+      if (!V && homeScreen === "browse") render();
+    } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+      // Reconnect from scratch after a short pause.
+      const old = dir; dir = null;
+      setTimeout(() => { try { sb.removeChannel(old.ch); } catch (e) {} dirOpen(); }, 1500);
+    }
   });
   return dir;
 }
-function dirClose() { if (dir) { sb.removeChannel(dir.ch); dir = null; } }
+// Stop advertising this device's lobby (the list connection itself stays open).
+function dirClose() {
+  if (dir && dir.meta) { dir.meta = null; if (dir.tracked) { dir.ch.untrack(); dir.tracked = false; } }
+}
 // Host: publish (or withdraw) this room in the lobby list.
 function lobbyAdvertise() {
   if (!sb || !room || isLocal || room.expectGuest) return;
   const joined = 1 + (room.guest ? 1 : 0) + (room.guest3 ? 1 : 0);
   const open = room.phase === "lobby" && joined < roomN();
-  if (!open) { if (dir && dir.meta) { dir.meta = null; dirClose(); } return; }
+  if (!open) { dirClose(); return; }
   const d = dirOpen();
-  d.meta = { token, code: room.code, name: room.lobbyName || `${room.names[1]}'s Lobby`, host: room.names[1], mode: room.mode, n: roomN(), joined, open: true, created: room.created || (room.created = Date.now()) };
-  if (d.ready) d.ch.track(d.meta);
+  d.meta = { v: APP_VERSION, token, code: room.code, name: room.lobbyName || `${room.names[1]}'s Lobby`, host: room.names[1], mode: room.mode, n: roomN(), joined, open: true, created: room.created || (room.created = Date.now()) };
+  if (d.ready) { d.ch.track(d.meta); d.tracked = true; }
 }
 
 function createGame(fixedCode, opts = {}) {
@@ -393,8 +415,8 @@ function joinGame(c) {
   if (store("cw_role") === "host" && store("cw_host_" + c) && resumeHost(c)) return;
   V = null; store("cw_room", c); store("cw_role", "guest");
   history.replaceState(null, "", "#" + c);
-  err = "Connecting…"; render();
   openChannel(c, false);
+  err = "Connecting…"; render();
 }
 function leaveLocal() {
   stopMatchmaking(); dirClose(); homeScreen = "home";
@@ -538,11 +560,14 @@ const localName = text => text; // local mode keeps "Player 1/2" wording
 
 function render() {
   renderScreen();
+  if (updateReady && !V && !mm && !code && !isLocal && tryReload(updateReady)) return;
+  if (updateReady) app.insertAdjacentHTML("afterbegin", `<div class="banner">${V ? "A new version is ready. It loads when you go back to the main menu." : "A new version is out. Pull down to refresh, or close and reopen the page."}</div>`);
   if (confirmMenu) app.insertAdjacentHTML("beforeend", menuModal());
 }
 function renderScreen() {
   if (localHandoff) return renderHandoff();
   if (mm && !V) return renderSearching();
+  if (!V && code && !isHost) return renderJoining();
   if (!V) return renderHome();
   if (V.phase === "lobby") return renderLobby();
   if (V.phase === "draft") return renderDraft();
@@ -565,6 +590,17 @@ function renderHandoff() {
     <h2>Pass the phone to Player ${b}</h2>
     <p class="muted">Everyone else, look away while Player ${b} picks.</p>
     <button class="primary" data-act="p2ready">I'm Player ${b}</button>
+  </section>`;
+}
+
+function renderJoining() {
+  app.innerHTML = `${header()}
+  <section class="handoff">
+    <div class="eyebrow">Lobby</div>
+    <div class="radar" aria-hidden="true"><i></i><i></i><i></i></div>
+    <h2>Joining…</h2>
+    <p class="muted">${err && err !== "Connecting…" ? esc(err) : "Connecting to the host."}</p>
+    <button class="ghost" data-act="leave">Cancel</button>
   </section>`;
 }
 
@@ -634,8 +670,9 @@ function renderBrowse() {
         <span class="lb-name">${esc(l.name)}</span>
         <span class="lb-meta">${esc(modeLabel(l.mode))} · hosted by ${esc(l.host)}</span>
         <span class="lb-seats">${l.joined}/${l.n}</span></button></li>`).join("")}</ul>`
-      : `<p class="muted">No open lobbies right now. Host one, or try Find match.</p>`}
+      : `<p class="muted">No open lobbies right now. Host one, or try Find match. The list updates on its own.</p>`}
     <button class="ghost" data-act="home">Back</button>
+    <p class="muted small">Version ${esc(APP_VERSION)}</p>
     <p class="err">${err}</p>
   </section>`;
 }
@@ -811,8 +848,7 @@ const gravCls = () => (flip && flip.phase === 1 && flip.type === "gravity" ? "gr
 function bannerHtml() {
   const b = fxFind("banner");
   if (!b || !AB[b.ability]) return "";
-  const who = you(b.by);
-  return `<div class="ability-banner p${b.by}" style="${b.ad}" aria-live="polite"><span class="ab-who">${who}</span><span class="ab-name">${AB[b.ability].name}</span></div>`;
+  return `<div class="ability-banner p${b.by}" style="${b.ad}" aria-live="polite" aria-label="${esc(you(b.by))} used ${AB[b.ability].name}"><span class="ab-name">${AB[b.ability].name}</span></div>`;
 }
 function clearedFall(f, r, c, gup) {
   let n = 0, maxRow = -1, minRow = ROWS;
@@ -1123,7 +1159,32 @@ function hardReset() {
   try { Object.keys(localStorage).filter(k => k.startsWith("cw_") && k !== "cw_token").forEach(k => localStorage.removeItem(k)); } catch (e) {}
   leaveLocal();
 }
+// Reload into version v once; if we already tried and still got the old page, don't loop.
+function tryReload(v) {
+  let tried = null; try { tried = sessionStorage.getItem("cw_reload_for"); } catch (e) {}
+  if (tried === v) return false;
+  try { sessionStorage.setItem("cw_reload_for", v); } catch (e) {}
+  location.replace(location.pathname + "?v=" + v + location.hash);
+  return true;
+}
+// Check for a newer build. On the main menu, reload straight into it; mid-game, show a notice.
+async function checkVersion() {
+  if (APP_VERSION === "dev") return;
+  try {
+    const res = await fetch("version.json?t=" + Date.now(), { cache: "no-store" });
+    const v = (await res.json()).version;
+    if (!v || v === APP_VERSION) return;
+    const idle = !V && !mm && !code && !isLocal;
+    if (idle && tryReload(v)) return;
+    if (updateReady !== v) { updateReady = v; render(); }
+  } catch (e) {}
+}
+setInterval(checkVersion, 60000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkVersion(); });
+
 (function boot() {
+  checkVersion();
+  dirOpen();
   const fromHash = location.hash.replace("#", "").trim().toUpperCase();
   if (fromHash === "RESET") { hardReset(); return render(); }
   if (!sb) return render();
