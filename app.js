@@ -346,47 +346,49 @@ function act(type, p, cb) {
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const randomCode = () => Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join("");
 /* ================= lobby directory ================= */
-// Open lobbies are advertised on the presence channel "cw-lobbies"; Find lobby lists them.
-let dir = null; // { ch, list, hosting }
-// One lobby-list connection for the whole session (re-creating it quickly can leave the list empty).
-function dirOpen() {
-  if (!sb) return null;
-  if (dir) return dir;
-  const ch = sb.channel("cw-lobbies", { config: { presence: { key: token } } });
-  dir = { ch, list: [], ready: false, meta: null, tracked: false };
-  ch.on("presence", { event: "sync" }, () => {
-    dir.ready = true;
-    dir.list = Object.values(ch.presenceState()).flat()
-      .filter(l => l.code && l.open && l.token !== token && l.v === APP_VERSION)
-      .sort((a, b) => b.created - a.created);
-    if (!V && homeScreen === "browse") render();
-  }).subscribe(async status => {
-    if (status === "SUBSCRIBED") {
-      dir.ready = true;
-      if (dir.meta) { await ch.track(dir.meta); dir.tracked = true; }
-      if (!V && homeScreen === "browse") render();
-    } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-      // Reconnect from scratch after a short pause.
-      const old = dir; dir = null;
-      setTimeout(() => { try { sb.removeChannel(old.ch); } catch (e) {} dirOpen(); }, 1500);
-    }
-  });
-  return dir;
+// Open lobbies live in the Supabase table "lobbies". The host refreshes its row every 5s while the lobby
+// is open; Find lobby re-reads the list every 5s and only shows rows refreshed in the last 20s.
+let dir = { list: [], ready: false, at: 0, err: "" }; // what Find lobby shows
+let browseTimer = null, hostBeat = null, advertisedCode = null;
+async function fetchLobbies() {
+  if (!sb) return;
+  const { data, error } = await sb.rpc("open_lobbies", { p_version: APP_VERSION });
+  dir.ready = true; dir.at = Date.now();
+  if (error) { dir.err = "Couldn't load lobbies. Retrying…"; }
+  else { dir.err = ""; dir.list = (data || []).filter(l => !(room && l.code === room.code)); }
+  if (!V && homeScreen === "browse") render();
 }
-// Stop advertising this device's lobby (the list connection itself stays open).
+function startBrowsing() {
+  stopBrowsing();
+  dir = { list: [], ready: false, at: 0, err: "" };
+  fetchLobbies();
+  browseTimer = setInterval(fetchLobbies, 5000);
+}
+function stopBrowsing() { if (browseTimer) clearInterval(browseTimer); browseTimer = null; }
+function dirOpen() { /* list connection is now on demand (Find lobby) */ }
+// Host: stop advertising this lobby.
 function dirClose() {
-  if (dir && dir.meta) { dir.meta = null; if (dir.tracked) { dir.ch.untrack(); dir.tracked = false; } }
+  if (hostBeat) clearInterval(hostBeat); hostBeat = null;
+  if (advertisedCode && sb) { const c = advertisedCode; advertisedCode = null; sb.from("lobbies").delete().eq("code", c).then(() => {}, () => {}); }
 }
-// Host: publish (or withdraw) this room in the lobby list.
+// Host: publish (or withdraw) this room in the lobby list, refreshing it every 5 seconds.
 function lobbyAdvertise() {
   if (!sb || !room || isLocal || room.expectGuest) return;
   const joined = 1 + (room.guest ? 1 : 0) + (room.guest3 ? 1 : 0);
   const open = room.phase === "lobby" && joined < roomN();
   if (!open) { dirClose(); return; }
-  const d = dirOpen();
-  d.meta = { v: APP_VERSION, token, code: room.code, name: room.lobbyName || `${room.names[1]}'s Lobby`, host: room.names[1], mode: room.mode, n: roomN(), joined, open: true, created: room.created || (room.created = Date.now()) };
-  if (d.ready) { d.ch.track(d.meta); d.tracked = true; }
+  const row = () => ({ code: room.code, name: (room.lobbyName || `${room.names[1]}'s Lobby`).slice(0, 40), host: String(room.names[1] || "Host").slice(0, 20),
+    mode: room.mode, n: roomN(), joined: 1 + (room.guest ? 1 : 0) + (room.guest3 ? 1 : 0), version: APP_VERSION });
+  const beat = () => {
+    if (!room || room.phase !== "lobby") return dirClose();
+    sb.from("lobbies").upsert(row(), { onConflict: "code" }).then(({ error }) => { if (error) console.warn("lobby heartbeat failed", error.message); });
+  };
+  advertisedCode = room.code;
+  beat();
+  if (!hostBeat) hostBeat = setInterval(beat, 5000);
 }
+// Withdraw the lobby if the host closes the tab.
+window.addEventListener("pagehide", () => { if (advertisedCode) dirClose(); });
 
 function createGame(fixedCode, opts = {}) {
   const c = fixedCode || randomCode();
@@ -419,7 +421,7 @@ function joinGame(c) {
   err = "Connecting…"; render();
 }
 function leaveLocal() {
-  stopMatchmaking(); dirClose(); homeScreen = "home";
+  stopMatchmaking(); dirClose(); stopBrowsing(); homeScreen = "home";
   closeChannel(); isLocal = false; localHandoff = false;
   if (isHost && room) store("cw_host_" + room.code, null);
   clearTimer(); room = null; isHost = false; code = null; V = null;
@@ -665,12 +667,13 @@ function renderBrowse() {
   <section class="setup">
     <div class="eyebrow">Find lobby</div>
     <h2>Open lobbies</h2>
-    ${!d || !d.ready ? `<p class="muted">Loading lobbies…</p>` : list.length ? `<ul class="lobbies">${list.map(l => `
+    ${!d.ready ? `<p class="muted">Loading lobbies…</p>` : list.length ? `<ul class="lobbies">${list.map(l => `
       <li><button class="lobby" data-joinlobby="${esc(l.code)}">
         <span class="lb-name">${esc(l.name)}</span>
         <span class="lb-meta">${esc(modeLabel(l.mode))} · hosted by ${esc(l.host)}</span>
         <span class="lb-seats">${l.joined}/${l.n}</span></button></li>`).join("")}</ul>`
-      : `<p class="muted">No open lobbies right now. Host one, or try Find match. The list updates on its own.</p>`}
+      : `<p class="muted">No open lobbies right now. Host one, or try Find match.</p>`}
+    <div class="refreshrow"><span class="muted small">${d.err ? esc(d.err) : d.ready ? "Refreshes every 5 seconds" : ""}</span><button class="linkbtn" data-act="refresh-lobbies">Refresh now</button></div>
     <button class="ghost" data-act="home">Back</button>
     <p class="muted small">Version ${esc(APP_VERSION)}</p>
     <p class="err">${err}</p>
@@ -1050,7 +1053,7 @@ app.addEventListener("click", e => {
   const pc = e.target.closest("[data-players]");
   if (pc) { playerCount = +pc.dataset.players; return render(); }
   const lb = e.target.closest("[data-joinlobby]");
-  if (lb) { const c = lb.dataset.joinlobby; dirClose(); homeScreen = "home"; err = ""; return joinGame(c); }
+  if (lb) { const c = lb.dataset.joinlobby; stopBrowsing(); homeScreen = "home"; err = ""; return joinGame(c); }
   const modeBtn = e.target.closest("[data-mode]");
   if (modeBtn) { gameMode = modeBtn.dataset.mode; return render(); }
   const pick = e.target.closest("[data-pick]");
@@ -1066,9 +1069,10 @@ app.addEventListener("click", e => {
     if (a === "local") { err = ""; return createLocal(); }
     if (a === "matchmake") { return startMatchmaking(); }
     if (a === "rename") { homeScreen = "name"; err = ""; return render(); }
-    if (a === "home") { homeScreen = "home"; err = ""; dirClose(); return render(); }
+    if (a === "home") { homeScreen = "home"; err = ""; stopBrowsing(); return render(); }
     if (a === "hostform") { homeScreen = "host"; err = ""; return render(); }
-    if (a === "browse") { homeScreen = "browse"; err = ""; dirOpen(); return render(); }
+    if (a === "browse") { homeScreen = "browse"; err = ""; startBrowsing(); return render(); }
+    if (a === "refresh-lobbies") { fetchLobbies(); return; }
     if (a === "mm-cancel") { stopMatchmaking(); return render(); }
     if (a === "menu") { confirmMenu = true; return app.insertAdjacentHTML("beforeend", menuModal()); }
     if (a === "menu-no") { confirmMenu = false; const m = app.querySelector(".modal"); if (m) m.remove(); return; }
