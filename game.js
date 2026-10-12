@@ -2,7 +2,7 @@
 (function (root) {
   // Board size is per game (2 players: 8×7, 3 players: 10×8); setDims switches it for whichever game is active.
   let ROWS = 7, COLS = 8, L = "ABCDEFGH";
-  const MAXE = 7, TURN_S = 20;
+  const MAXE = 7, TURN_S = 20, TARGET = 3; // first to 3 fours wins
   function setDims(rows, cols) { ROWS = rows; COLS = cols; L = "ABCDEFGHIJKL".slice(0, cols); }
   // Disc values: player 1 = 1, player 2 = 2, player 3 = 6 (3, 4, 5 are stone, grenade, fixed stone).
   const PV = p => (p === 3 ? 6 : p);
@@ -20,7 +20,7 @@
     flip:   { name: "Flip",        cost: 5, t: "col",  desc: "Invert one column top to bottom." },
     grenade:{ name: "Grenade",     cost: 3, t: "col",  desc: "Drop a grenade. After 2 seconds it explodes, destroying the discs directly above, below, left and right of it." },
     reinforce:{ name: "Reinforce", cost: 3, t: "col",  desc: "Slide your disc into the floor end of a column, pushing the stack away from the floor." },
-    punch:  { name: "Punch In",    cost: 0, t: "cell", only: "rt", desc: "Punch your disc into any cell that isn't an enemy disc. It can replace a stone, a fixed stone or a grenade." },
+    punch:  { name: "Punch In",    cost: 3, t: "cell", desc: "Punch your disc into any cell that isn't an enemy disc. It can replace a stone, a fixed stone or a grenade." },
     gravity:{ name: "Gravity Flip", cost: 6, t: "none", desc: "Reverse gravity. All discs fly to the other side, and new discs come from there until it's flipped again." }
   };
   const opp = p => 3 - p; // 2-player shorthand (Full Auto)
@@ -36,7 +36,7 @@
     const g = {
       n, rows: ROWS, cols: COLS,
       grid: blank(0), anc: blank(false), cur: starter,
-      energy,
+      energy, score: {},
       frozen: null, abilityUsed: false, dropsLeft: 1, dropsMade: 0, dd: false, firstCol: null,
       over: false, result: null, win: [], last: null, gained: 0, note: "", ev: null, seq: 0, turnId: 0
     };
@@ -59,7 +59,20 @@
     if (up(g)) { for (let r = ROWS - 1; r >= 0; r--) if (g.grid[r][c]) return r; return -1; }
     for (let r = 0; r < ROWS; r++) if (g.grid[r][c]) return r; return -1;
   };
-  const isFull = g => { for (let c = 0; c < COLS; c++) if (topEmpty(g, c) >= 0) return false; return true; };
+  // A drop travels in from the entry side; the first fixed stone it meets shatters and it keeps going.
+  function landing(g, c) {
+    const u = up(g), step = u ? -1 : 1, start = u ? ROWS - 1 : 0, end = u ? -1 : ROWS;
+    let broke = null;
+    for (let r = start; r !== end; r += step) {
+      const v = g.grid[r][c];
+      if (!v) continue;
+      if (v === FIXED && broke === null) { broke = r; continue; }
+      return { r: r === start ? -1 : r - step, broke };
+    }
+    return { r: end - step, broke };
+  }
+  const columnOpen = (g, c) => { const l = landing(g, c); return l.r >= 0 || l.broke !== null; };
+  const isFull = g => { for (let c = 0; c < COLS; c++) if (columnOpen(g, c)) return false; return true; };
   const count = (g, c) => g.grid.reduce((n, row) => n + (row[c] ? 1 : 0), 0);
   // Stretches of a column between fixed stones, as [lo, hi] row ranges.
   function segs(g, c) {
@@ -122,25 +135,51 @@
   }
   function finish(g, w, cells) {
     g.over = true; g.result = w; g.win = cells;
-    g.note = w ? `Player ${w} connects four.` : "Board full. Draw.";
+    g.note = w ? `Player ${w} wins with ${(g.score && g.score[w]) || 1} fours.` : "Draw.";
     return true;
   }
+  // Every completed four scores a point and turns into fixed stones. First to TARGET wins
+  // (if two players get there on the same move, the player who moved wins). A board with no
+  // open column is wiped. Returns true when the match ended.
   function resolve(g) {
-    const a = lines(g, g.cur);
-    if (a.length) return finish(g, g.cur, a);
-    for (let i = 1, p = nextP(g, g.cur); i < (g.n || 2); i++, p = nextP(g, p)) { const b = lines(g, p); if (b.length) return finish(g, p, b); }
-    if (isFull(g)) return finish(g, 0, []);
+    g.score = g.score || {};
+    const order = [g.cur]; for (let i = 1, p = nextP(g, g.cur); i < (g.n || 2); i++, p = nextP(g, p)) order.push(p);
+    const scores = [];
+    for (const p of order) { const cells = lines(g, p); if (cells.length) scores.push({ p, cells }); }
+    if (scores.length) {
+      for (const sc of scores) {
+        for (const k of sc.cells) { const [r, c] = k.split(",").map(Number); g.grid[r][c] = FIXED; g.anc[r][c] = false; }
+        g.score[sc.p] = (g.score[sc.p] || 0) + 1;
+      }
+      g.last = null;
+      if (g.ev) g.ev.scores = scores;
+      g.note += ` ${scores.map(sc => `Player ${sc.p}`).join(" and ")} scored!`;
+      const best = Math.max(...order.map(p => g.score[p] || 0));
+      if (best >= TARGET) {
+        const w = order.find(p => (g.score[p] || 0) === best);
+        const won = scores.find(sc => sc.p === w);
+        return finish(g, w, won ? won.cells : []);
+      }
+    }
+    if (isFull(g)) {
+      g.grid = blank(0); g.anc = blank(false); g.bombs = []; g.last = null;
+      if (g.ev) g.ev.wipe = true;
+      g.note += " Board full, so it was wiped.";
+    }
     return false;
   }
 
   function canDrop(g, c) {
-    if (c < 0 || c >= COLS || topEmpty(g, c) < 0) return false;
+    if (c < 0 || c >= COLS || !columnOpen(g, c)) return false;
     const f = g.frozen;
     if (f && frozenOn(f, g.cur) && f.col === c) return false;
     if (g.dd && g.dropsMade === 1) {
       if (c === g.firstCol) return false;
-      const r = topEmpty(g, c);
+      const l = landing(g, c), saved = l.broke !== null ? g.grid[l.broke][c] : null;
+      if (l.broke !== null) g.grid[l.broke][c] = 0;
+      const r = l.r >= 0 ? l.r : l.broke;
       g.grid[r][c] = PV(g.cur); const w = lines(g, g.cur).length > 0; g.grid[r][c] = 0;
+      if (l.broke !== null) g.grid[l.broke][c] = saved;
       if (w) return false;
     }
     return true;
@@ -153,14 +192,17 @@
     if (!canDrop(g, c)) {
       const f = g.frozen;
       if (f && frozenOn(f, g.cur) && f.col === c) return `Column ${L[c]} is frozen this turn.`;
-      if (topEmpty(g, c) < 0) return `Column ${L[c]} is full.`;
+      if (!columnOpen(g, c)) return `Column ${L[c]} is full.`;
       if (c === g.firstCol) return "The second disc must go in a different column.";
       return "The second Double Drop disc can't complete a 4.";
     }
-    const p = g.cur, r = topEmpty(g, c);
+    const p = g.cur, l = landing(g, c);
+    if (l.broke !== null) { g.grid[l.broke][c] = 0; g.anc[l.broke][c] = false; }
+    const r = l.r >= 0 ? l.r : l.broke;
     g.grid[r][c] = PV(p); g.last = { r, c };
-    g.ev = { type: "drop", r, c }; g.seq++;
-    g.note = `Player ${p} dropped in ${L[c]}.`;
+    g.ev = { type: "drop", r, c }; if (l.broke !== null) g.ev.broke = l.broke;
+    g.seq++;
+    g.note = `Player ${p} dropped in ${L[c]}${l.broke !== null ? " and smashed a stone" : ""}.`;
     if (g.dropsMade === 0) g.firstCol = c;
     g.dropsMade++;
     if (resolve(g)) return null;
@@ -221,6 +263,7 @@
     if (t === "col" && !validCol(g, id, a.c)) return `Not a valid column for ${nm}.`;
     if (id === "anchor" && !validCell(g, id, a.r, a.c)) return "Pick one of your own unanchored discs.";
     if (id === "swap" && !partner(g, a.r, a.c, a.r2, a.c2)) return "Pick two adjacent, unanchored discs of different colors.";
+    if (id === "punch" && !validCell(g, id, a.r, a.c)) return "Punch In can't target a player's disc.";
 
     g.energy[p] -= AB[id].cost; g.abilityUsed = true;
     const c = a.c;
@@ -238,11 +281,20 @@
       g.last = null; note = `Player ${p} swapped two discs.`;
     }
     if (id === "grenade") { const r = topEmpty(g, c); placeGrenade(g, r, c, Date.now(), p); g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} dropped a grenade in ${L[c]}.`; }
+    if (id === "punch") {
+      if (g.grid[a.r][c] === 4) g.bombs = (g.bombs || []).filter(b => b.id !== g.anc[a.r][c]);
+      g.grid[a.r][c] = PV(p); g.anc[a.r][c] = "punch";
+      compactCol(g, c);
+      let r2 = a.r; for (let r = 0; r < ROWS; r++) if (g.anc[r][c] === "punch") { r2 = r; g.anc[r][c] = false; }
+      g.last = { r: r2, c }; ev = { type: "punch", r: r2, c, from: a.r };
+      note = `Player ${p} punched in a disc at ${L[c]}${ROWS - a.r}.`;
+    }
     if (id === "gravity") { ev = { type: "gravity", prev: clone(g) }; flipGravity(g); note = `Player ${p} flipped gravity. Discs now fall ${up(g) ? "up" : "down"}.`; }
     if (id === "double") { g.dd = true; g.dropsLeft = 2; note = `Player ${p} used Double Drop.`; }
     ev.ability = id; ev.by = p;
     g.ev = ev; g.seq++; g.note = note;
     if (resolve(g)) return null;
+    if (id === "grenade") { endTurn(g); return null; } // a grenade is the whole turn
     if (!anyDrop(g)) { endTurn(g); g.note = note + ` Player ${p} has no open column, so the turn ends.` + g.note; }
     return null;
   }
@@ -313,6 +365,7 @@
   const api = { get ROWS() { return ROWS; }, get COLS() { return COLS; }, get L() { return L; }, setDims, PV, isDisc, nextP, others,
     MAXE, TURN_S, AB, opp, newGame, canDrop, drop, ability, timeout, validCol, validCell, hasTarget, abilityReady, count,
     FIXED, segs, compactCol, flipCol, reinforce, floorSeg,
+    TARGET, landing, columnOpen,
     lines, topEmpty, topDisc, floorRow, isFull, flipGravity, up, stack, writeStack, clone, partner, blank, placeGrenade, detonate, tickBombs, FUSE_MS };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.CW = api;
 })(typeof window !== "undefined" ? window : globalThis);

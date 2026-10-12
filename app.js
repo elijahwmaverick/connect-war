@@ -471,6 +471,13 @@ function onView(v) {
     if (g.seq !== lastSeq) {
       flip = null; busy = false;
       if (lastSeq !== -1 && g.ev && g.ev.ability) fx.push({ type: "banner", ability: g.ev.ability, by: g.ev.by, start: fxNow() });
+      if (lastSeq !== -1 && g.ev && g.ev.scores) {
+        const t = g.ev.type, lead = t === "flip" || t === "pop" || t === "gravity" ? 900 : t === "boom" ? 560 : (FX_MS[t === "block" ? "drop" : t] || 0) + 40;
+        const cells = g.ev.scores.flatMap(sc => sc.cells), owner = {};
+        g.ev.scores.forEach(sc => sc.cells.forEach(k => { owner[k] = sc.p; }));
+        fx.push({ type: "score", petrify: cells, owner, start: fxNow() + lead });
+        setTimeout(() => { if (!busy) render(); }, lead + 20);
+      }
       if (lastSeq !== -1 && g.ev) {
         const t = g.ev.type;
         if (t === "flip" || t === "pop" || t === "gravity") flip = { type: t, c: g.ev.c, prev: g.ev.prev, phase: 1 };
@@ -485,7 +492,8 @@ function onView(v) {
         showOver = lastSeq === -1;
         // Let the move that won play out before the four lights up.
         const t = g.ev && g.ev.type;
-        const moveMs = lastSeq === -1 ? 0 : flip ? ({ pop: 420, clear: 820, gravity: 340 }[flip.type] || 560) + 480 : (FX_MS[t === "block" ? "drop" : t] || 0) + 60;
+        let moveMs = lastSeq === -1 ? 0 : flip ? ({ pop: 420, clear: 820, gravity: 340 }[flip.type] || 560) + 480 : (FX_MS[t === "block" ? "drop" : t] || 0) + 60;
+        if (moveMs && g.ev && g.ev.scores) moveMs += 850; // let the four turn to stone first
         winAt = fxNow() + moveMs;
         if (moveMs) setTimeout(() => { if (V && V.game && V.game.over && !busy) render(); }, moveMs + 30);
         if (!showOver) setTimeout(() => {
@@ -772,7 +780,8 @@ function panel(p) {
   const picks = picksOf(p);
   const on = g.cur === p && !g.over;
   return `<div class="pl ${on ? "on" : ""}" data-p="${p}">
-    <div class="nm"><b>${you(p)}</b>${on ? '<span class="turn">Turn</span>' : ""}</div>
+    <div class="nm"><b>${you(p)}</b>${on ? '<span class="turn">Turn</span>' : `<span class="score" title="Fours">${(g.score && g.score[p]) || 0}</span>`}</div>
+    <div class="fours" aria-label="${(g.score && g.score[p]) || 0} of ${CW.TARGET} fours">${Array.from({ length: CW.TARGET }, (_, i) => `<i class="${i < ((g.score && g.score[p]) || 0) ? "f" : ""}"></i>`).join("")}<span>fours</span></div>
     <div class="pips" aria-label="${e} of ${MAXE} energy">${Array.from({ length: MAXE }, (_, i) => `<i class="${i < e ? "f" : ""}"></i>`).join("")}<span>${e}/${MAXE}</span></div>
     <div class="lo">${(picks || []).map(id => AB[id].name).join(" · ")}${fz ? `<br>Column ${L[g.frozen.col]} frozen` : ""}</div>
   </div>`;
@@ -809,8 +818,8 @@ function statusText() {
     const nt = named(g.note);
     return (g.sudden ? "<b>Sudden death</b>: next score wins. " : "") + (nt || "Go! Drop discs as fast as your cooldowns allow.");
   }
-  if (g.over && V.local) return g.result ? `Player ${g.result} connects four.` : "Board full. Draw.";
-  if (g.over) return g.result ? (g.result === V.seat ? "You connect four." : `${you(g.result)} connects four.`) : "Board full. Draw.";
+  if (g.over && V.local) return g.result ? `Player ${g.result} wins with ${CW.TARGET} fours.` : "Draw.";
+  if (g.over) return g.result ? (g.result === V.seat ? `You win with ${CW.TARGET} fours.` : `${you(g.result)} wins with ${CW.TARGET} fours.`) : "Draw.";
   if (mode) return PROMPT[mode]();
   if (V.local) {
     const who = `<b class="c${g.cur}">Player ${g.cur}</b>`;
@@ -839,7 +848,8 @@ function overHtml() {
   return `<div class="over"><div class="box">
     <div class="eyebrow ${g.result ? "c" + g.result : ""}">Match over</div>
     <h2>${title}</h2>
-    ${isRT() ? `<p class="muted">${V.local ? `Player 1 ${g.score[1]} – ${g.score[2]} Player 2` : `${g.score[V.seat]}–${g.score[other]}`}${g.sudden ? " in sudden death" : ""}</p>` : ""}
+    ${isRT() ? `<p class="muted">${V.local ? `Player 1 ${g.score[1]} – ${g.score[2]} Player 2` : `${g.score[V.seat]}–${g.score[other]}`}${g.sudden ? " in sudden death" : ""}</p>`
+      : g.score ? `<p class="muted">${[...Array(V.n || 2).keys()].map(i => i + 1).map(p => `${you(p)} ${g.score[p] || 0}`).join(" · ")}</p>` : ""}
     ${sub ? `<p class="muted">${sub}</p>` : ""}
     <button class="primary" data-act="rematch" ${r.includes(V.seat) && !V.local ? "disabled" : ""}>${r.includes(V.seat) ? "Waiting for opponent" : "Rematch"}</button>
     <button class="ghost" data-act="redraft" ${d.includes(V.seat) && !V.local ? "disabled" : ""}>${d.includes(V.seat) ? "Waiting for opponent" : "New loadouts"}</button>
@@ -853,6 +863,7 @@ function bannerHtml() {
   if (!b || !AB[b.ability]) return "";
   return `<div class="ability-banner p${b.by}" style="${b.ad}" aria-live="polite" aria-label="${esc(you(b.by))} used ${AB[b.ability].name}"><span class="ab-name">${AB[b.ability].name}</span></div>`;
 }
+const vShowPending = key => !!fx.find(f => f.type === "score" && f.owner && f.start > fxNow() && f.petrify.includes(key));
 function clearedFall(f, r, c, gup) {
   let n = 0, maxRow = -1, minRow = ROWS;
   for (const grp of f.clears) for (const k of grp.cells) { const [rr, cc] = k.split(",").map(Number); if (cc === c) { n++; maxRow = Math.max(maxRow, rr); minRow = Math.min(minRow, rr); } }
@@ -899,20 +910,21 @@ function renderPlay() {
       let disc = "", disc0 = "";
       const at = (rr, cc2) => rr === r && cc2 === c;
       if (v) {
-        let n = 0, extra = "", style = "";
+        let n = 0, extra = "", style = "", vShow = v;
         const dfx = fxFind("drop", f => at(f.r, f.c));
         if (dfx) { n = gup ? ROWS - r : r + 1; style += dfx.ad; }
         if (flip && flip.phase === 2 && (flip.type === "gravity" || (flip.type !== "clear" && flip.c === c))) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
         if (flip && flip.phase === 2 && flip.type === "clear") n = clearedFall(flip, r, c, gup);
         if (flip && flip.phase === 1 && flip.type === "clear" && flip.ev && flip.ev.type === "drop" && at(flip.ev.r, flip.ev.c)) n = gup ? ROWS - r : r + 1;
         if (flip && flip.phase === 1 && flip.type === "clear" && cleared.has(r + "," + c)) { extra += flip.ev && flip.ev.type === "boom" ? " boomed" : " scored"; style += `--wd:${(0.25 + cleared.get(r + "," + c) * 0.06).toFixed(2)}s;`; }
-        if (v === 5) n = 0; // fixed stones never move
+        if (v === 5 && !(dfx && vShowPending(r + "," + c))) n = 0; // fixed stones never move (a just-dropped disc that is about to petrify still falls)
         if (n) { const [k, st] = motion(n); extra += k; style += st; }
         const popFloor = (flip && flip.prev && flip.prev.gdir === -1) || (!flip && gup) ? 0 : ROWS - 1;
         if (flip && flip.phase === 1 && flip.type === "pop" && flip.c === c && r === popFloor) extra += " burst";
         const key = r + "," + c;
         const pfx = fxFind("score", f => (f.petrify || []).includes(key)) || fxFind("contest", f => (f.petrify || []).includes(key));
-        if (pfx) { extra += " petrify"; style += pfx.ad; }
+        if (pfx && pfx.owner && pfx.start > fxNow()) vShow = CW.PV(pfx.owner[key]); // still the player's disc until the move lands
+        else if (pfx) { extra += " petrify"; style += pfx.ad; }
         const rfx = fxFind("reinforce", f => f.c === c && (f.gdir === -1 ? r < f.n : r >= ROWS - f.n));
         if (rfx) { extra += " push"; style += rfx.ad + `--push:calc(${rfx.gdir === -1 ? -1 : 1} * (116.3% + 3px));`; }
         const pufx = fxFind("punch", f => at(f.r, f.c));
@@ -932,7 +944,7 @@ function renderPlay() {
         const lst = g.last && g.last.r === r && g.last.c === c && !g.over;
         if (v === 4) { const b = (g0.bombs || []).find(x => x.id === shown.anc[r][c]); if (b && b.until - now < 900) extra += " fuse-hot"; if (b && b.by) extra += " own" + b.by; }
         if (v === 3 && typeof shown.anc[r][c] === "string" && shown.anc[r][c][0] === "o") extra += " own" + shown.anc[r][c].slice(1);
-        disc = `<div class="disc d${v} ${shown.anc[r][c] === true ? "anc" : ""}${extra} ${lst ? "last" : ""}" ${style ? `style="${style}"` : ""}></div>` + disc0;
+        disc = `<div class="disc d${vShow} ${shown.anc[r][c] === true ? "anc" : ""}${extra} ${lst ? "last" : ""}" ${style ? `style="${style}"` : ""}></div>` + disc0;
       } else {
         const lfx = fxFind("lift", f => at(f.r, f.c));
         if (lfx) disc = `<div class="disc d${lfx.v} lift-out${gup ? " down" : ""}" style="${lfx.ad}"></div>`;
@@ -985,10 +997,12 @@ function renderPlay() {
     <li>First to 5 wins. After 5 minutes the higher score wins. A tie goes to sudden death: cooldowns ×¼, next score wins.</li>
     <li>Round dark hatched stone = Block (neutral, falls with gravity). Light gray square = scored four (fixed in place).</li>
     <li>A full board with no four is wiped.</li></ul></details>` : `<details><summary>Rules</summary><ul>
-    <li>Connect 4 in a row on an 8×7 board.</li>
+    <li>Each four in a row scores a point and turns into fixed stones. First to ${CW.TARGET} fours wins.</li>
+    <li>A drop smashes the first fixed stone it lands on and keeps falling. A full board is wiped.</li>
+    <li>Using a Grenade ends your turn.</li>
     <li>Each turn: gain 1 energy (max 7), optionally use one ability, then drop one disc.</li>
     <li>Gold ring = anchored disc (immune to Pop and Swap). Striped column = frozen for one player.</li>
-    <li>If an ability makes four for both players, the player who used it wins.</li>
+    <li>If one move gives two players their winning four, the player who moved wins.</li>
     <li>Turn clock timeout: no drop and no energy that turn.</li>
     <li>Rematch swaps who goes first.</li></ul></details>`}`;
 }
