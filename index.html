@@ -68,7 +68,7 @@ h2{font-family:var(--fd);font-size:22px;margin:0;text-wrap:balance}
 .disc{position:absolute;inset:7%;border-radius:50%}
 .d1{background:radial-gradient(circle at 34% 30%,var(--p1l),var(--p1) 45%,var(--p1d))}
 .d2{background:radial-gradient(circle at 34% 30%,var(--p2l),var(--p2) 45%,var(--p2d))}
-.d3{background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.35),transparent 55%),repeating-linear-gradient(45deg,#b9b3a7 0 3px,#9a9488 3px 6px);box-shadow:inset 0 0 0 2px #6f6a60,inset 0 -3px 0 rgba(0,0,0,.18)}
+.d3{background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.18),transparent 55%),repeating-linear-gradient(45deg,#7b818b 0 3px,#5d636c 3px 6px);box-shadow:inset 0 0 0 2px #454a52}
 .anc::after{content:"";position:absolute;inset:24%;border-radius:50%;border:2px solid var(--gold);box-shadow:0 0 0 2px rgba(0,0,0,.25)}
 .last::before{content:"";position:absolute;left:50%;top:50%;width:18%;height:18%;transform:translate(-50%,-50%);border-radius:50%;background:rgba(255,255,255,.75)}
 .fall{animation:fall .42s linear}
@@ -241,8 +241,7 @@ details ul{padding-left:18px;margin:8px 0 0}
 @media (prefers-reduced-motion:reduce){.rise,.board.grav1{animation:none}}
 
 /* Fixed stone (Full Auto scored four): dark, riveted, clearly not a disc */
-.d5{border-radius:14%;inset:4%;background:linear-gradient(145deg,#3c4350,#232830 55%,#171a20);box-shadow:inset 0 0 0 2px var(--gold),inset 0 0 0 4px #14171c,inset 0 3px 0 rgba(255,255,255,.08)}
-.d5::before{content:"";position:absolute;inset:16%;background:radial-gradient(circle,var(--gold) 0 30%,transparent 34%) 0 0/50% 50%;opacity:.75}
+.d5{border-radius:12%;inset:5%;background:#cfd3da;box-shadow:inset 0 0 0 2px #aeb3bc,inset 0 3px 0 rgba(255,255,255,.55),inset 0 -3px 0 rgba(0,0,0,.12)}
 .disc.petrify{animation:petrify .85s ease-out}
 @keyframes petrify{0%{filter:brightness(2.4) sepia(1) saturate(4) hue-rotate(5deg);transform:scale(1.25);box-shadow:0 0 0 3px var(--gold),0 0 22px 6px var(--gold)}60%{filter:brightness(1.4);transform:scale(1.05)}100%{filter:none;transform:none}}
 /* Reinforce: the stack is shoved one step away from the floor */

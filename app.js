@@ -789,7 +789,7 @@ function renderPlay() {
     <li>Each four scores 1 point, and its discs turn into fixed stones. Fixed stones never move (not even with Gravity Flip). A grenade destroys them, and a drop smashes the first fixed stone it lands on and keeps falling.</li>
     <li>Contested: after a four, your opponent has 0.5s to make their own four. If they do, neither scores and both fours turn to stone.</li>
     <li>First to 5 wins. After 5 minutes the higher score wins. A tie goes to sudden death: cooldowns ×¼, next score wins.</li>
-    <li>Round hatched stone = Block (neutral, falls with gravity). Square gold-edged stone = scored four (fixed in place).</li>
+    <li>Round dark hatched stone = Block (neutral, falls with gravity). Light gray square = scored four (fixed in place).</li>
     <li>A full board with no four is wiped.</li></ul></details>` : `<details><summary>Rules</summary><ul>
     <li>Connect 4 in a row on an 8×7 board.</li>
     <li>Each turn: gain 1 energy (max 7), optionally use one ability, then drop one disc.</li>
