@@ -796,7 +796,7 @@ const PROMPT = {
   pop: () => `Pop: tap a column whose ${V && V.game && V.game.gdir === -1 ? "top" : "bottom"} disc is ${V && V.n === 3 ? "an opponent's" : "your opponent's"}.`,
   swap: () => "Swap: tap a disc, then an adjacent disc of the other color.",
   flip: () => "Flip: tap a column with 2 or more discs.",
-  insert: () => (rowSel === null ? "Insert: tap a row to slide a disc into." : "Insert: pick the side it slides in from."),
+  insert: () => "Insert: tap a glowing slot on the left or right edge. Your disc slides in from that side.",
   rotate: () => "Rotate: pick Turn left or Turn right. That side of the board becomes the floor.",
   shift: () => (rowSel === null ? "Shift: tap any cell in the row you want to slide." : "Shift: pick a direction."),
   punch: () => "Punch In: tap any cell that isn't an enemy disc.",
@@ -867,9 +867,30 @@ function bannerHtml() {
   return `<div class="ability-banner p${b.by}" style="${b.ad}" aria-live="polite" aria-label="${esc(you(b.by))} used ${AB[b.ability].name}"><span class="ab-name">${AB[b.ability].name}</span></div>`;
 }
 const vShowPending = key => !!fx.find(f => f.type === "score" && f.owner && f.start > fxNow() && f.petrify.includes(key));
+// Insert: an open slot on the left or right edge picks both the row and the side.
+const insertSide = (g, r, c) => (c === 0 && CW.sideOpen(g, r, "left") ? "left" : c === COLS - 1 && CW.sideOpen(g, r, "right") ? "right" : null);
+// Arrows drawn on the board while choosing a direction (they can be tapped too).
+const ARC = '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M32 12 A20 20 0 1 1 12 32" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M12 19 L3 35 L21 35 Z" fill="currentColor"/></svg>';
+const CHEV = '<svg viewBox="0 0 48 32" aria-hidden="true"><path d="M4 16 H36" stroke="currentColor" stroke-width="6" stroke-linecap="round"/><path d="M28 5 L44 16 L28 27 Z" fill="currentColor"/></svg>';
+function dirOverlay(g, seat) {
+  if (!(mode === "rotate" || (mode === "shift" && rowSel !== null))) return "";
+  if (mode === "rotate") return `<div class="diroverlay rot">
+    <button class="arrowbtn rot-l" data-dir="left" aria-label="Turn the board left">${ARC}<span>Turn left</span></button>
+    <button class="arrowbtn rot-r" data-dir="right" aria-label="Turn the board right">${ARC}<span>Turn right</span></button></div>`;
+  const top = `calc(${(rowSel + 0.5) / ROWS} * 100%)`;
+  if (mode === "shift") return `<div class="diroverlay">
+    <div class="rowband" style="top:${top};height:calc(100% / ${ROWS})"></div>
+    <button class="arrowbtn edge out-l" style="top:${top}" data-dir="left" aria-label="Shift row left">${CHEV}</button>
+    <button class="arrowbtn edge out-r" style="top:${top}" data-dir="right" aria-label="Shift row right">${CHEV}</button></div>`;
+  const okL = CW.sideOpen(g, rowSel, "left"), okR = CW.sideOpen(g, rowSel, "right");
+  return `<div class="diroverlay">
+    <div class="rowband" style="top:${top};height:calc(100% / ${ROWS})"></div>
+    <button class="arrowbtn edge in-l" style="top:${top}" data-dir="left" ${okL ? "" : "disabled"} aria-label="Insert from the left">${CHEV}</button>
+    <button class="arrowbtn edge in-r" style="top:${top}" data-dir="right" ${okR ? "" : "disabled"} aria-label="Insert from the right">${CHEV}</button></div>`;
+}
 // Left/right buttons for Rotate, Shift and Insert.
 function choiceHtml(g) {
-  if (!(mode === "rotate" || ((mode === "shift" || mode === "insert") && rowSel !== null))) return "";
+  if (!(mode === "rotate" || (mode === "shift" && rowSel !== null))) return "";
   const lab = { rotate: ["⟲ Turn left", "Turn right ⟳"], shift: ["← Shift left", "Shift right →"], insert: ["→ From left", "From right ←"] }[mode];
   const dis = d => (mode === "insert" && !CW.sideOpen(g, rowSel, d) ? "disabled" : "");
   return `<div class="choice"><button class="primary" data-dir="left" ${dis("left")}>${lab[0]}</button><button class="primary" data-dir="right" ${dis("right")}>${lab[1]}</button></div>`;
@@ -931,7 +952,8 @@ function renderPlay() {
     for (let r = 0; r < ROWS; r++) {
       const v = shown.grid[r][c]; let cc = "cell";
       if (myTurn && (mt === "own" || mt === "pair" || mt === "cell") && CW.validCell(g, mode, r, c, swapSel)) cc += " tgt";
-      if (myTurn && (mt === "row" || mt === "side")) cc += rowSel === r ? " sel" : rowSel === null && CW.validCell(g, mode, r, c) ? " tgt" : "";
+      if (myTurn && mt === "row" && rowSel === null && CW.validCell(g, mode, r, c)) cc += " tgt";
+      if (myTurn && mt === "side" && insertSide(g, r, c)) cc += " tgt edgeglow";
       if (swapSel && swapSel[0] === r && swapSel[1] === c) cc += " sel";
       const wi = wins.get(r + "," + c);
       if (wi !== undefined) cc += " win";
@@ -1023,7 +1045,7 @@ function renderPlay() {
   ${dc}
   <div class="players" style="grid-template-columns:repeat(${V.n || 2},1fr)">${turnOrder().map(panel).join("")}</div>
   <p class="status" aria-live="polite">${statusText()}</p>
-  <div class="board-wrap"><div class="board ${!rt && showWin && g.result ? "won" : ""} ${gravCls()} ${flip && flip.phase === 1 && flip.type === "rotate" ? "rot-" + flip.dir : ""} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>${bannerHtml()}
+  <div class="board-wrap"><div class="board ${!rt && showWin && g.result ? "won" : ""} ${gravCls()} ${flip && flip.phase === 1 && flip.type === "rotate" ? "rot-" + flip.dir : ""} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${myTurn ? dirOverlay(g) : ""}${g.over && showOver ? overHtml() : ""}</div>${bannerHtml()}
   <div class="letters" style="grid-template-columns:repeat(${COLS},1fr)">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
   ${g.gdir === -1 ? `<div class="gravtag">Gravity is up: discs rise from the bottom${g.gravRevert ? ` · flips back at the start of ${g.gravRevert.by === V.seat ? "your" : you(g.gravRevert.by) + "'s"} ${["", "next", "2nd", "3rd"][g.gravRevert.left] || ""} turn` : ""}</div>` : ""}
   ${myTurn ? choiceHtml(g) : ""}
@@ -1070,7 +1092,7 @@ function renderTabletop({ g, g0, now, cols, pend, ddFlash }) {
   ${side(2)}
   ${choiceHtml({ ...g0, cur: modeSeat })}
   <p class="status tabletop-status" aria-live="polite">${status}${g0.gdir === -1 ? ` <span class="gravtag inline">Gravity up</span>` : ""}</p>
-  <div class="board-wrap"><div class="board ${gravCls()} ${g0.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g0.over && showOver ? overHtml() : ""}</div>${bannerHtml()}
+  <div class="board-wrap"><div class="board ${gravCls()} ${g0.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${!g0.over && !busy ? dirOverlay({ ...g0, cur: modeSeat }) : ""}${g0.over && showOver ? overHtml() : ""}</div>${bannerHtml()}
   ${side(1)}
   ${g0.over ? `<button class="ghost" data-act="leave">Leave game</button>` : ""}`;
 }
@@ -1199,8 +1221,13 @@ app.addEventListener("click", e => {
     if (!CW.validCol(g, mode, c)) { localMsg = "Not a valid column. " + PROMPT[mode](); return render(); }
     return sendAct("ability", { id: mode, c });
   }
-  if (mode === "shift" || mode === "insert") {
-    if (!CW.validCell(g, mode, r, c)) { localMsg = mode === "shift" ? "That row has nothing to shift." : "Both edges of that row are blocked."; return render(); }
+  if (mode === "insert") {
+    const side = insertSide(g, r, c);
+    if (!side) { localMsg = "Tap a glowing slot on the left or right edge."; return render(); }
+    return sendAct("ability", { id: "insert", r, dir: side });
+  }
+  if (mode === "shift") {
+    if (!CW.validCell(g, mode, r, c)) { localMsg = "That row has nothing to shift."; return render(); }
     rowSel = rowSel === r ? null : r; return render();
   }
   if (mode === "rotate") return;

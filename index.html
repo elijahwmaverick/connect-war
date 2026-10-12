@@ -336,15 +336,37 @@ details ul{padding-left:18px;margin:8px 0 0}
 @keyframes rotL{to{transform:rotate(-90deg) scale(.86)}}
 .choice{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 @media (prefers-reduced-motion:reduce){.board.rot-right,.board.rot-left{animation:none}}
+
+/* Direction arrows on the board (Rotate / Shift / Insert) */
+.diroverlay{position:absolute;inset:6px;z-index:6;pointer-events:none}
+.diroverlay.rot{display:flex;align-items:center;justify-content:space-between;padding-inline:4%}
+.arrowbtn{pointer-events:auto;background:rgba(12,15,20,.72);border:2px solid var(--gold);color:var(--gold);border-radius:14px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px;animation:arrowpulse 1.1s ease-in-out infinite alternate}
+.arrowbtn:disabled{opacity:.25;cursor:not-allowed;animation:none}
+.arrowbtn span{font-family:var(--fd);font-size:12px;letter-spacing:.12em;text-transform:uppercase;font-weight:700}
+.rot .arrowbtn svg{width:72px;height:72px}
+.rot-l svg{transform:scaleX(-1)}
+.arrowbtn.edge{position:absolute;transform:translateY(-50%);padding:3px 4px;border-radius:9px;background:rgba(12,15,20,.85)}
+.arrowbtn.edge svg{width:28px;height:18px;display:block}
+.out-l{left:-16px}.out-l svg{transform:scaleX(-1)}
+.out-r{right:-16px}
+.in-l{left:-16px}
+.in-r{right:-16px}.in-r svg{transform:scaleX(-1)}
+.rowband{position:absolute;left:0;right:0;transform:translateY(-50%);border-radius:8px;box-shadow:0 0 0 2px var(--gold) inset;background:rgba(242,193,78,.12)}
+@keyframes arrowpulse{to{box-shadow:0 0 16px 2px rgba(242,193,78,.55)}}
+@media (prefers-reduced-motion:reduce){.arrowbtn{animation:none}}
+
+.cell.edgeglow{box-shadow:0 0 0 2px var(--gold),0 0 12px 3px rgba(242,193,78,.7);animation:edgeglow .9s ease-in-out infinite alternate;cursor:pointer}
+@keyframes edgeglow{to{box-shadow:0 0 0 3px var(--gold),0 0 18px 6px rgba(242,193,78,.9)}}
+@media (prefers-reduced-motion:reduce){.cell.edgeglow{animation:none}}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script>window.CW_VERSION="20261012021753"</script>
-<script src="config.js?v=20261012021753"></script>
-<script src="game.js?v=20261012021753"></script>
-<script src="rt.js?v=20261012021753"></script>
-<script src="app.js?v=20261012021753"></script>
+<script>window.CW_VERSION="20261012022250"</script>
+<script src="config.js?v=20261012022250"></script>
+<script src="game.js?v=20261012022250"></script>
+<script src="rt.js?v=20261012022250"></script>
+<script src="app.js?v=20261012022250"></script>
 </body>
 </html>
