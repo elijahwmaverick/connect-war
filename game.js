@@ -23,6 +23,7 @@
     punch:  { name: "Punch In",    cost: 3, t: "cell", desc: "Punch your disc into any cell that isn't an enemy disc. It can replace a stone, a fixed stone or a grenade." },
     rotate: { name: "Rotate",      cost: 5, t: "dir",  only: "tactics", desc: "Turn the board 90° left or right. That side becomes the floor and every disc falls." },
     shift:  { name: "Shift",       cost: 3, t: "row",  only: "tactics", desc: "Slide every disc in a row one space left or right. The end disc wraps around; fixed stones stay put." },
+    insert: { name: "Insert",      cost: 2, t: "side", desc: "Slide your disc in from the left or right edge of a row. It stops at the first occupied cell or the far wall, then falls." },
     gravity:{ name: "Gravity Flip", cost: 6, t: "none", desc: "Reverse gravity. All discs fly to the other side, and new discs come from there until it's flipped again." }
   };
   const opp = p => 3 - p; // 2-player shorthand (Full Auto)
@@ -243,6 +244,7 @@
     if (id === "anchor") return g.grid[r][c] === PV(g.cur) && !g.anc[r][c];
     if (id === "punch") return [0, 3, 4, FIXED].includes(g.grid[r][c]);
     if (id === "shift") return rowMovable(g, r);
+    if (id === "insert") return sideOpen(g, r, "left") || sideOpen(g, r, "right");
     if (id === "swap") return sel ? partner(g, sel[0], sel[1], r, c) : swapFirst(g, r, c);
     return false;
   }
@@ -250,6 +252,7 @@
     const t = AB[id].t;
     if (t === "col") { for (let c = 0; c < COLS; c++) if (validCol(g, id, c)) return true; return false; }
     if (t === "row") { for (let r = 0; r < ROWS; r++) if (rowMovable(g, r)) return true; return false; }
+    if (t === "side") { for (let r = 0; r < ROWS; r++) if (validCell(g, id, r, 0)) return true; return false; }
     if (t === "own" || t === "pair" || t === "cell") {
       for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (validCell(g, id, r, c, null)) return true;
       return false;
@@ -273,6 +276,7 @@
     if (id === "punch" && !validCell(g, id, a.r, a.c)) return "Punch In can't target a player's disc.";
     if ((id === "rotate" || id === "shift") && a.dir !== "left" && a.dir !== "right") return "Pick left or right.";
     if (id === "shift" && !rowMovable(g, a.r)) return "That row has nothing to shift.";
+    if (id === "insert" && !sideOpen(g, a.r, a.dir)) return "That edge of the row is blocked.";
 
     g.energy[p] -= AB[id].cost; g.abilityUsed = true;
     const c = a.c;
@@ -304,6 +308,7 @@
       note = up(g) ? `Player ${p} flipped gravity. Discs fall up until the start of Player ${p}'s third turn from now.` : `Player ${p} flipped gravity back down.`;
     }
     if (id === "rotate") { const prev = clone(g); rotateBoard(g, a.dir); const mid = clone(g); for (let cc = 0; cc < COLS; cc++) compactCol(g, cc); g.last = null; ev = { type: "rotate", dir: a.dir, prev, mid }; note = `Player ${p} rotated the board ${a.dir}.`; }
+    if (id === "insert") { ev = insertFromSide(g, a.r, a.dir, PV(p)); note = `Player ${p} inserted a disc from the ${a.dir} into row ${ROWS - a.r}.`; }
     if (id === "shift") { const prev = clone(g); shiftRow(g, a.r, a.dir); const mid = clone(g); for (let cc = 0; cc < COLS; cc++) compactCol(g, cc); g.last = null; ev = { type: "shift", r: a.r, dir: a.dir, prev, mid }; note = `Player ${p} shifted row ${ROWS - a.r} ${a.dir}.`; }
     if (id === "double") { g.dd = true; g.dropsLeft = 2; note = `Player ${p} used Double Drop.`; }
     ev.ability = id; ev.by = p;
@@ -380,6 +385,20 @@
     for (let c = 0; c < COLS; c++) { const v = g.grid[r][c]; if (v !== FIXED) { slots++; if (v) pieces++; } }
     return pieces > 0 && slots > 1;
   }
+  // Insert: the edge cell of row r on that side must be empty.
+  const sideOpen = (g, r, side) => r >= 0 && r < ROWS && (side === "left" || side === "right") && !g.grid[r][side === "left" ? 0 : COLS - 1];
+  // Slide a piece in from the side until the next cell is occupied (or the far wall), then let it fall.
+  function insertFromSide(g, r, side, value) {
+    const prev = clone(g), step = side === "left" ? 1 : -1;
+    let c = side === "left" ? 0 : COLS - 1;
+    while (c + step >= 0 && c + step < COLS && !g.grid[r][c + step]) c += step;
+    g.grid[r][c] = value; g.anc[r][c] = "ins";
+    const mid = clone(g); mid.anc[r][c] = false;
+    compactCol(g, c);
+    let r2 = r; for (let rr = 0; rr < ROWS; rr++) if (g.anc[rr][c] === "ins") { r2 = rr; g.anc[rr][c] = false; }
+    g.last = { r: r2, c };
+    return { type: "insert", r, c, side, r2, prev, mid };
+  }
   // Slide every movable piece in row r one step; the end piece wraps around. Fixed stones stay put.
   function shiftRow(g, r, dir) {
     const cols = []; for (let c = 0; c < COLS; c++) if (g.grid[r][c] !== FIXED) cols.push(c);
@@ -417,7 +436,7 @@
   const api = { get ROWS() { return ROWS; }, get COLS() { return COLS; }, get L() { return L; }, setDims, PV, isDisc, nextP, others,
     MAXE, TURN_S, AB, opp, newGame, canDrop, drop, ability, timeout, validCol, validCell, hasTarget, abilityReady, count,
     FIXED, segs, compactCol, flipCol, reinforce, floorSeg,
-    TARGET, landing, columnOpen, rotateBoard, shiftRow, rowMovable,
+    TARGET, landing, columnOpen, rotateBoard, shiftRow, rowMovable, sideOpen, insertFromSide,
     lines, topEmpty, topDisc, floorRow, isFull, flipGravity, up, stack, writeStack, clone, partner, blank, placeGrenade, detonate, tickBombs, FUSE_MS };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.CW = api;
 })(typeof window !== "undefined" ? window : globalThis);

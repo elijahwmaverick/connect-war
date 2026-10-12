@@ -288,7 +288,7 @@ function handle(seat, type, p) {
     const g = room.game;
     if (room.phase !== "play" || !g || g.over) return "No active match.";
     if (room.mode === "rt") {
-      const a = { id: p.id, c: Number(p.c), r: Number(p.r), r2: Number(p.r2), c2: Number(p.c2) };
+      const a = { id: p.id, c: Number(p.c), r: Number(p.r), r2: Number(p.r2), c2: Number(p.c2), dir: p.dir === "left" || p.dir === "right" ? p.dir : null };
       return type === "drop" ? RT.drop(g, seat, Number(p.c), Date.now()) : RT.ability(g, seat, a, room.picks[seat], Date.now());
     }
     if (seat !== g.cur) return "It's not your turn.";
@@ -481,7 +481,7 @@ function onView(v) {
       if (lastSeq !== -1 && g.ev) {
         const t = g.ev.type;
         if (t === "flip" || t === "pop" || t === "gravity") flip = { type: t, c: g.ev.c, prev: g.ev.prev, phase: 1 };
-        else if (t === "rotate" || t === "shift") flip = { type: t, dir: g.ev.dir, r: g.ev.r, prev: g.ev.prev, mid: g.ev.mid, settle: settleMap(g.ev.mid, g), phase: 1 };
+        else if (t === "rotate" || t === "shift" || t === "insert") flip = { type: t, dir: g.ev.dir || g.ev.side, r: g.ev.r, ev_r: g.ev.r, ev_c: g.ev.c, prev: g.ev.prev, mid: g.ev.mid, settle: settleMap(g.ev.mid, g), phase: 1 };
         else if (g.ev.clears && g.ev.prev) flip = { type: "clear", prev: g.ev.prev, clears: g.ev.clears, phase: 1, ev: g.ev };
         else fx.push({ ...g.ev, type: t === "block" ? "drop" : t, start: fxNow() });
       }
@@ -515,7 +515,7 @@ function onView(v) {
   if (flip && flip.phase === 1) {
     busy = flip.type !== "clear"; render();
     const f = flip;
-    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : f.type === "clear" ? (f.ev && f.ev.type === "boom" ? 520 : 820) : f.type === "gravity" ? 340 : f.type === "rotate" ? 620 : f.type === "shift" ? 460 : 560);
+    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : f.type === "clear" ? (f.ev && f.ev.type === "boom" ? 520 : 820) : f.type === "gravity" ? 340 : f.type === "rotate" ? 620 : f.type === "shift" || f.type === "insert" ? 460 : 560);
   } else render();
 }
 
@@ -796,6 +796,7 @@ const PROMPT = {
   pop: () => `Pop: tap a column whose ${V && V.game && V.game.gdir === -1 ? "top" : "bottom"} disc is ${V && V.n === 3 ? "an opponent's" : "your opponent's"}.`,
   swap: () => "Swap: tap a disc, then an adjacent disc of the other color.",
   flip: () => "Flip: tap a column with 2 or more discs.",
+  insert: () => (rowSel === null ? "Insert: tap a row to slide a disc into." : "Insert: pick the side it slides in from."),
   rotate: () => "Rotate: pick Turn left or Turn right. That side of the board becomes the floor.",
   shift: () => (rowSel === null ? "Shift: tap any cell in the row you want to slide." : "Shift: pick a direction."),
   punch: () => "Punch In: tap any cell that isn't an enemy disc.",
@@ -866,6 +867,13 @@ function bannerHtml() {
   return `<div class="ability-banner p${b.by}" style="${b.ad}" aria-live="polite" aria-label="${esc(you(b.by))} used ${AB[b.ability].name}"><span class="ab-name">${AB[b.ability].name}</span></div>`;
 }
 const vShowPending = key => !!fx.find(f => f.type === "score" && f.owner && f.start > fxNow() && f.petrify.includes(key));
+// Left/right buttons for Rotate, Shift and Insert.
+function choiceHtml(g) {
+  if (!(mode === "rotate" || ((mode === "shift" || mode === "insert") && rowSel !== null))) return "";
+  const lab = { rotate: ["⟲ Turn left", "Turn right ⟳"], shift: ["← Shift left", "Shift right →"], insert: ["→ From left", "From right ←"] }[mode];
+  const dis = d => (mode === "insert" && !CW.sideOpen(g, rowSel, d) ? "disabled" : "");
+  return `<div class="choice"><button class="primary" data-dir="left" ${dis("left")}>${lab[0]}</button><button class="primary" data-dir="right" ${dis("right")}>${lab[1]}</button></div>`;
+}
 // How far each disc falls between two boards (column by column, movable pieces keep their order).
 function settleMap(from, to) {
   const out = {}, R = to.grid.length, C = to.grid[0].length, upG = to.gdir === -1;
@@ -894,7 +902,7 @@ function renderPlay() {
   const g0 = V.game, g = rt ? { ...g0, cur: V.local ? modeSeat : V.seat } : g0;
   const myTurn = rt ? !g.over && !busy : g.cur === V.seat && !g.over && !busy;
   const canDropCol = c => (rt ? RT.canDrop(g, V.seat, c, now) : CW.canDrop(g, c));
-  const shownSrc = flip && flip.phase === 1 ? (flip.type === "shift" ? flip.mid : flip.prev) : null;
+  const shownSrc = flip && flip.phase === 1 ? (flip.type === "shift" || flip.type === "insert" ? flip.mid : flip.prev) : null;
   const shown = shownSrc ? { ...g, grid: shownSrc.grid, anc: shownSrc.anc } : g;
   const cleared = new Map();
   if (flip && flip.type === "clear") {
@@ -923,7 +931,7 @@ function renderPlay() {
     for (let r = 0; r < ROWS; r++) {
       const v = shown.grid[r][c]; let cc = "cell";
       if (myTurn && (mt === "own" || mt === "pair" || mt === "cell") && CW.validCell(g, mode, r, c, swapSel)) cc += " tgt";
-      if (myTurn && mt === "row") cc += rowSel === r ? " sel" : rowSel === null && CW.validCell(g, mode, r, c) ? " tgt" : "";
+      if (myTurn && (mt === "row" || mt === "side")) cc += rowSel === r ? " sel" : rowSel === null && CW.validCell(g, mode, r, c) ? " tgt" : "";
       if (swapSel && swapSel[0] === r && swapSel[1] === c) cc += " sel";
       const wi = wins.get(r + "," + c);
       if (wi !== undefined) cc += " win";
@@ -933,7 +941,11 @@ function renderPlay() {
         let n = 0, extra = "", style = "", vShow = v;
         const dfx = fxFind("drop", f => at(f.r, f.c));
         if (dfx) { n = gup ? ROWS - r : r + 1; style += dfx.ad; }
-        if (flip && flip.phase === 2 && (flip.type === "rotate" || flip.type === "shift")) n = flip.settle[r + "," + c] || 0;
+        if (flip && flip.phase === 2 && (flip.type === "rotate" || flip.type === "shift" || flip.type === "insert")) n = flip.settle[r + "," + c] || 0;
+        if (flip && flip.phase === 1 && flip.type === "insert" && r === flip.ev_r && c === flip.ev_c) {
+          const fromC = flip.dir === "left" ? -1 : COLS;
+          extra += " slide"; style += `--sx:calc(${fromC - c} * (116.3% + 7px));--sy:0px;`;
+        }
         else if (flip && flip.phase === 2 && (flip.type === "gravity" || (flip.type !== "clear" && flip.c === c))) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
         if (flip && flip.phase === 2 && flip.type === "clear") n = clearedFall(flip, r, c, gup);
         if (flip && flip.phase === 1 && flip.type === "clear" && flip.ev && flip.ev.type === "drop" && at(flip.ev.r, flip.ev.c)) n = gup ? ROWS - r : r + 1;
@@ -1014,9 +1026,7 @@ function renderPlay() {
   <div class="board-wrap"><div class="board ${!rt && showWin && g.result ? "won" : ""} ${gravCls()} ${flip && flip.phase === 1 && flip.type === "rotate" ? "rot-" + flip.dir : ""} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>${bannerHtml()}
   <div class="letters" style="grid-template-columns:repeat(${COLS},1fr)">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
   ${g.gdir === -1 ? `<div class="gravtag">Gravity is up: discs rise from the bottom${g.gravRevert ? ` · flips back at the start of ${g.gravRevert.by === V.seat ? "your" : you(g.gravRevert.by) + "'s"} ${["", "next", "2nd", "3rd"][g.gravRevert.left] || ""} turn` : ""}</div>` : ""}
-  ${myTurn && (mode === "rotate" || (mode === "shift" && rowSel !== null)) ? `<div class="choice">
-    <button class="primary" data-dir="left">${mode === "rotate" ? "⟲ Turn left" : "← Shift left"}</button>
-    <button class="primary" data-dir="right">${mode === "rotate" ? "Turn right ⟳" : "Shift right →"}</button></div>` : ""}
+  ${myTurn ? choiceHtml(g) : ""}
   ${tray}
   <p class="err">${err}</p>
   ${rt ? `<details><summary>Rules</summary><ul>
@@ -1058,6 +1068,7 @@ function renderTabletop({ g, g0, now, cols, pend, ddFlash }) {
   const status = mode ? `<b class="c${modeSeat}">Player ${modeSeat}</b> · ${statusText()}` : statusText();
   app.innerHTML = `${header(`<div class="timer mclock ${g0.sudden ? "warn" : ""}"><span id="mclock">${g0.sudden ? "SUDDEN DEATH" : fmtClock(g0.endsAt - now)}</span></div>`)}
   ${side(2)}
+  ${choiceHtml({ ...g0, cur: modeSeat })}
   <p class="status tabletop-status" aria-live="polite">${status}${g0.gdir === -1 ? ` <span class="gravtag inline">Gravity up</span>` : ""}</p>
   <div class="board-wrap"><div class="board ${gravCls()} ${g0.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g0.over && showOver ? overHtml() : ""}</div>${bannerHtml()}
   ${side(1)}
@@ -1172,8 +1183,8 @@ app.addEventListener("click", e => {
     mode = id; swapSel = null; rowSel = null; return render();
   }
   const dirBtn = e.target.closest("[data-dir]");
-  if (dirBtn && (mode === "rotate" || (mode === "shift" && rowSel !== null))) {
-    const dir = dirBtn.dataset.dir, payload = mode === "rotate" ? { id: "rotate", dir } : { id: "shift", r: rowSel, dir };
+  if (dirBtn && (mode === "rotate" || ((mode === "shift" || mode === "insert") && rowSel !== null))) {
+    const dir = dirBtn.dataset.dir, payload = mode === "rotate" ? { id: "rotate", dir } : { id: mode, r: rowSel, dir };
     rowSel = null; return sendAct("ability", payload);
   }
   const cell = e.target.closest(".cell");
@@ -1188,8 +1199,8 @@ app.addEventListener("click", e => {
     if (!CW.validCol(g, mode, c)) { localMsg = "Not a valid column. " + PROMPT[mode](); return render(); }
     return sendAct("ability", { id: mode, c });
   }
-  if (mode === "shift") {
-    if (!CW.validCell(g, "shift", r, c)) { localMsg = "That row has nothing to shift."; return render(); }
+  if (mode === "shift" || mode === "insert") {
+    if (!CW.validCell(g, mode, r, c)) { localMsg = mode === "shift" ? "That row has nothing to shift." : "Both edges of that row are blocked."; return render(); }
     rowSel = rowSel === r ? null : r; return render();
   }
   if (mode === "rotate") return;
