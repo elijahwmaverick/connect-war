@@ -21,11 +21,13 @@
     grenade:{ name: "Grenade",     cost: 3, t: "col",  desc: "Drop a grenade. After 2 seconds it explodes, destroying the discs directly above, below, left and right of it." },
     reinforce:{ name: "Reinforce", cost: 3, t: "col",  desc: "Slide your disc into the floor end of a column, pushing the stack away from the floor." },
     punch:  { name: "Punch In",    cost: 3, t: "cell", desc: "Punch your disc into any cell that isn't an enemy disc. It can replace a stone, a fixed stone or a grenade." },
+    rotate: { name: "Rotate",      cost: 5, t: "dir",  only: "tactics", desc: "Turn the board 90° left or right. That side becomes the floor and every disc falls." },
+    shift:  { name: "Shift",       cost: 3, t: "row",  only: "tactics", desc: "Slide every disc in a row one space left or right. The end disc wraps around; fixed stones stay put." },
     gravity:{ name: "Gravity Flip", cost: 6, t: "none", desc: "Reverse gravity. All discs fly to the other side, and new discs come from there until it's flipped again." }
   };
   const opp = p => 3 - p; // 2-player shorthand (Full Auto)
   const blank = v => Array.from({ length: ROWS }, () => Array(COLS).fill(v));
-  const clone = g => ({ grid: g.grid.map(r => r.slice()), anc: g.anc.map(r => r.slice()) });
+  const clone = g => ({ grid: g.grid.map(r => r.slice()), anc: g.anc.map(r => r.slice()), rows: g.grid.length, cols: g.grid[0].length, gdir: g.gdir || 1 });
 
   const frozenOn = (f, p) => (f.players ? f.players.includes(p) : f.player === p);
   function newGame(starter, opts = {}) {
@@ -119,6 +121,7 @@
     g.gained = g.energy[g.cur] < MAXE ? 1 : 0;
     g.energy[g.cur] += g.gained;
     Object.assign(g, { abilityUsed: false, dropsLeft: 1, dropsMade: 0, dd: false, firstCol: null });
+    if (g.gravRevert && g.gravRevert.by === g.cur && --g.gravRevert.left <= 0) g.revertAt = Date.now() + 650; // host's ticker flips it back
     if (!anyDrop(g)) {
       const p = g.cur;
       endTurn(g);
@@ -189,6 +192,7 @@
   // Returns an error string, or null on success.
   function drop(g, c) {
     if (g.over) return "The match is over.";
+    if (g.revertAt) return "Gravity is flipping back…";
     if (!canDrop(g, c)) {
       const f = g.frozen;
       if (f && frozenOn(f, g.cur) && f.col === c) return `Column ${L[c]} is frozen this turn.`;
@@ -238,12 +242,14 @@
     if (!inB(r, c)) return false;
     if (id === "anchor") return g.grid[r][c] === PV(g.cur) && !g.anc[r][c];
     if (id === "punch") return [0, 3, 4, FIXED].includes(g.grid[r][c]);
+    if (id === "shift") return rowMovable(g, r);
     if (id === "swap") return sel ? partner(g, sel[0], sel[1], r, c) : swapFirst(g, r, c);
     return false;
   }
   function hasTarget(g, id) {
     const t = AB[id].t;
     if (t === "col") { for (let c = 0; c < COLS; c++) if (validCol(g, id, c)) return true; return false; }
+    if (t === "row") { for (let r = 0; r < ROWS; r++) if (rowMovable(g, r)) return true; return false; }
     if (t === "own" || t === "pair" || t === "cell") {
       for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (validCell(g, id, r, c, null)) return true;
       return false;
@@ -258,12 +264,15 @@
   function ability(g, a, loadout) {
     const id = a && a.id;
     if (!AB[id]) return "Unknown ability.";
+    if (g.revertAt) return "Gravity is flipping back…";
     if (!abilityReady(g, id, loadout)) return `${AB[id].name} isn't available right now.`;
     const p = g.cur, nm = AB[id].name, t = AB[id].t;
     if (t === "col" && !validCol(g, id, a.c)) return `Not a valid column for ${nm}.`;
     if (id === "anchor" && !validCell(g, id, a.r, a.c)) return "Pick one of your own unanchored discs.";
     if (id === "swap" && !partner(g, a.r, a.c, a.r2, a.c2)) return "Pick two adjacent, unanchored discs of different colors.";
     if (id === "punch" && !validCell(g, id, a.r, a.c)) return "Punch In can't target a player's disc.";
+    if ((id === "rotate" || id === "shift") && a.dir !== "left" && a.dir !== "right") return "Pick left or right.";
+    if (id === "shift" && !rowMovable(g, a.r)) return "That row has nothing to shift.";
 
     g.energy[p] -= AB[id].cost; g.abilityUsed = true;
     const c = a.c;
@@ -289,7 +298,13 @@
       g.last = { r: r2, c }; ev = { type: "punch", r: r2, c, from: a.r };
       note = `Player ${p} punched in a disc at ${L[c]}${ROWS - a.r}.`;
     }
-    if (id === "gravity") { ev = { type: "gravity", prev: clone(g) }; flipGravity(g); note = `Player ${p} flipped gravity. Discs now fall ${up(g) ? "up" : "down"}.`; }
+    if (id === "gravity") {
+      ev = { type: "gravity", prev: clone(g) }; flipGravity(g);
+      g.gravRevert = up(g) ? { by: p, left: 3 } : null; g.revertAt = null;
+      note = up(g) ? `Player ${p} flipped gravity. Discs fall up until the start of Player ${p}'s third turn from now.` : `Player ${p} flipped gravity back down.`;
+    }
+    if (id === "rotate") { const prev = clone(g); rotateBoard(g, a.dir); const mid = clone(g); for (let cc = 0; cc < COLS; cc++) compactCol(g, cc); g.last = null; ev = { type: "rotate", dir: a.dir, prev, mid }; note = `Player ${p} rotated the board ${a.dir}.`; }
+    if (id === "shift") { const prev = clone(g); shiftRow(g, a.r, a.dir); const mid = clone(g); for (let cc = 0; cc < COLS; cc++) compactCol(g, cc); g.last = null; ev = { type: "shift", r: a.r, dir: a.dir, prev, mid }; note = `Player ${p} shifted row ${ROWS - a.r} ${a.dir}.`; }
     if (id === "double") { g.dd = true; g.dropsLeft = 2; note = `Player ${p} used Double Drop.`; }
     ev.ability = id; ev.by = p;
     g.ev = ev; g.seq++; g.note = note;
@@ -325,6 +340,14 @@
   }
   // Tactics: called by the host's ticker.
   function tickBombs(g, now) {
+    if (!g.over && g.revertAt && now >= g.revertAt) {
+      const ev = { type: "gravity", prev: clone(g), auto: true };
+      flipGravity(g); g.gravRevert = null; g.revertAt = null;
+      g.note = "Gravity flipped back down.";
+      g.ev = ev; g.seq++;
+      resolve(g);
+      return true;
+    }
     if (g.over || !g.bombs || !g.bombs.length) return false;
     const due = g.bombs.find(b => b.until <= now);
     if (!due) return false;
@@ -334,6 +357,35 @@
     g.ev = ev; g.seq++;
     resolve(g);
     return true;
+  }
+
+  // Rotate the whole board 90°. "right" = clockwise (the right side becomes the floor), "left" = counter-clockwise.
+  // Rows and columns swap; nothing settles here (the caller lets discs fall afterwards). Freezes are cleared.
+  function rotateBoard(g, dir) {
+    const R = ROWS, C = COLS, grid = [], anc = [];
+    for (let r = 0; r < C; r++) {
+      grid.push([]); anc.push([]);
+      for (let c = 0; c < R; c++) {
+        const [sr, sc] = dir === "right" ? [R - 1 - c, r] : [c, C - 1 - r];
+        grid[r].push(g.grid[sr][sc]); anc[r].push(g.anc[sr][sc]);
+      }
+    }
+    g.grid = grid; g.anc = anc; g.rows = C; g.cols = R; setDims(C, R);
+    g.frozen = null; g.firstCol = null;
+  }
+  // Can row r be shifted? (it has at least one piece that isn't a fixed stone, and somewhere to move)
+  function rowMovable(g, r) {
+    if (r < 0 || r >= ROWS) return false;
+    let pieces = 0, slots = 0;
+    for (let c = 0; c < COLS; c++) { const v = g.grid[r][c]; if (v !== FIXED) { slots++; if (v) pieces++; } }
+    return pieces > 0 && slots > 1;
+  }
+  // Slide every movable piece in row r one step; the end piece wraps around. Fixed stones stay put.
+  function shiftRow(g, r, dir) {
+    const cols = []; for (let c = 0; c < COLS; c++) if (g.grid[r][c] !== FIXED) cols.push(c);
+    const vals = cols.map(c => [g.grid[r][c], g.anc[r][c]]);
+    const moved = dir === "right" ? [vals[vals.length - 1], ...vals.slice(0, -1)] : [...vals.slice(1), vals[0]];
+    cols.forEach((c, i) => { g.grid[r][c] = moved[i][0]; g.anc[r][c] = moved[i][1]; });
   }
 
   // Reverse gravity: every disc slides to the other side (keeping its order) and new discs come from that side.
@@ -365,7 +417,7 @@
   const api = { get ROWS() { return ROWS; }, get COLS() { return COLS; }, get L() { return L; }, setDims, PV, isDisc, nextP, others,
     MAXE, TURN_S, AB, opp, newGame, canDrop, drop, ability, timeout, validCol, validCell, hasTarget, abilityReady, count,
     FIXED, segs, compactCol, flipCol, reinforce, floorSeg,
-    TARGET, landing, columnOpen,
+    TARGET, landing, columnOpen, rotateBoard, shiftRow, rowMovable,
     lines, topEmpty, topDisc, floorRow, isFull, flipGravity, up, stack, writeStack, clone, partner, blank, placeGrenade, detonate, tickBombs, FUSE_MS };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.CW = api;
 })(typeof window !== "undefined" ? window : globalThis);

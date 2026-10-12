@@ -264,7 +264,7 @@ function handle(seat, type, p) {
   if (type === "pick") {
     if (room.phase !== "draft") return "Picks are closed.";
     const ids = p.ids;
-    const pool = room.mode === "rt" ? RT.POOL : Object.keys(AB).filter(id => !AB[id].only);
+    const pool = room.mode === "rt" ? RT.POOL : Object.keys(AB).filter(id => !AB[id].only || AB[id].only === "tactics");
     if (!Array.isArray(ids) || ids.length !== 3 || new Set(ids).size !== 3 || !ids.every(id => pool.includes(id))) return "Pick exactly 3 different abilities.";
     if (room.picks[seat]) return "You already locked in.";
     room.picks[seat] = ids.slice();
@@ -294,9 +294,9 @@ function handle(seat, type, p) {
     if (seat !== g.cur) return "It's not your turn.";
     let e;
     if (type === "drop") e = CW.drop(g, Number(p.c));
-    else e = CW.ability(g, { id: p.id, c: Number(p.c), r: Number(p.r), r2: Number(p.r2), c2: Number(p.c2) }, room.picks[seat]);
+    else e = CW.ability(g, { id: p.id, c: Number(p.c), r: Number(p.r), r2: Number(p.r2), c2: Number(p.c2), dir: p.dir === "left" || p.dir === "right" ? p.dir : null }, room.picks[seat]);
     if (e) return e;
-    if (g.over) { clearTimer(); room.deadline = null; } else armTimer(type === "ability" && (p.id === "flip" || p.id === "pop" || p.id === "gravity") ? 800 : 0);
+    if (g.over) { clearTimer(); room.deadline = null; } else armTimer(type === "ability" && ["flip", "pop", "gravity", "rotate", "shift"].includes(p.id) ? 1000 : 0);
     return null;
   }
   return "Unknown action.";
@@ -436,7 +436,7 @@ function leave() {
 
 /* ================= view + rendering ================= */
 let V = null, err = "", timerOn = true, sel = [];
-let mode = null, swapSel = null, localMsg = "";
+let mode = null, swapSel = null, localMsg = "", rowSel = null;
 let lastSeq = -1, lastOver = false, showOver = false, flip = null, busy = false, confirmMenu = false;
 // Short animations in flight. Re-renders resume them part-way (negative animation-delay) instead of restarting or dropping them.
 let fx = [];
@@ -481,13 +481,14 @@ function onView(v) {
       if (lastSeq !== -1 && g.ev) {
         const t = g.ev.type;
         if (t === "flip" || t === "pop" || t === "gravity") flip = { type: t, c: g.ev.c, prev: g.ev.prev, phase: 1 };
+        else if (t === "rotate" || t === "shift") flip = { type: t, dir: g.ev.dir, r: g.ev.r, prev: g.ev.prev, mid: g.ev.mid, settle: settleMap(g.ev.mid, g), phase: 1 };
         else if (g.ev.clears && g.ev.prev) flip = { type: "clear", prev: g.ev.prev, clears: g.ev.clears, phase: 1, ev: g.ev };
         else fx.push({ ...g.ev, type: t === "block" ? "drop" : t, start: fxNow() });
       }
       if (v.mode === "rt" && !g.over) {
         localMsg = "";
         if (swapSel && !CW.validCell({ ...g, cur: v.local ? modeSeat : v.seat }, "swap", swapSel[0], swapSel[1], null)) swapSel = null;
-      } else { mode = null; swapSel = null; localMsg = ""; }
+      } else { mode = null; swapSel = null; rowSel = null; localMsg = ""; }
       if (g.over && !lastOver) {
         showOver = lastSeq === -1;
         // Let the move that won play out before the four lights up.
@@ -514,7 +515,7 @@ function onView(v) {
   if (flip && flip.phase === 1) {
     busy = flip.type !== "clear"; render();
     const f = flip;
-    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : f.type === "clear" ? (f.ev && f.ev.type === "boom" ? 520 : 820) : f.type === "gravity" ? 340 : 560);
+    setTimeout(() => { if (flip === f) { flip.phase = 2; busy = false; render(); flip = null; } }, f.type === "pop" ? 420 : f.type === "clear" ? (f.ev && f.ev.type === "boom" ? 520 : 820) : f.type === "gravity" ? 340 : f.type === "rotate" ? 620 : f.type === "shift" ? 460 : 560);
   } else render();
 }
 
@@ -752,7 +753,7 @@ function renderDraft() {
     <h2>${V.local ? `Player ${p}: pick 3 abilities` : "Pick 3 abilities"}</h2>
     <p class="muted">${V.local ? "Everyone else, look away. Picks stay hidden until the match starts." : ((V.n || 2) === 3 ? `Picks stay hidden until everyone locks in. ${V.othersLocked ? `${V.othersLocked} of 2 others locked in.` : ""}` : `Your opponent can't see your picks until both of you lock in. ${V.oppLocked ? "Your opponent has locked in." : ""}`)}</p>
     ${dc}
-    <div class="cards">${Object.entries(AB).filter(([id, a]) => (isRT() ? RT.POOL.includes(id) : !a.only)).map(([id, a]) => `<button class="card ${sel.includes(id) ? "on" : ""}" data-pick="${id}" aria-pressed="${sel.includes(id)}">
+    <div class="cards">${Object.entries(AB).filter(([id, a]) => (isRT() ? RT.POOL.includes(id) : !a.only || a.only === "tactics")).map(([id, a]) => `<button class="card ${sel.includes(id) ? "on" : ""}" data-pick="${id}" aria-pressed="${sel.includes(id)}">
       <span class="cn">${a.name}</span><span class="cost">${costLabel(id)}</span><span class="cd">${descOf(id)}</span></button>`).join("")}</div>
     <button class="primary" data-act="lock" ${sel.length === 3 ? "" : "disabled"}>Lock in (${sel.length}/3)</button>
     <p class="err">${err}</p>
@@ -795,6 +796,8 @@ const PROMPT = {
   pop: () => `Pop: tap a column whose ${V && V.game && V.game.gdir === -1 ? "top" : "bottom"} disc is ${V && V.n === 3 ? "an opponent's" : "your opponent's"}.`,
   swap: () => "Swap: tap a disc, then an adjacent disc of the other color.",
   flip: () => "Flip: tap a column with 2 or more discs.",
+  rotate: () => "Rotate: pick Turn left or Turn right. That side of the board becomes the floor.",
+  shift: () => (rowSel === null ? "Shift: tap any cell in the row you want to slide." : "Shift: pick a direction."),
   punch: () => "Punch In: tap any cell that isn't an enemy disc.",
   reinforce: () => `Reinforce: tap a column to slide your disc in from the ${V && V.game && V.game.gdir === -1 ? "top" : "bottom"}.`,
   grenade: () => "Grenade: tap a column to drop it. It explodes 2 seconds later."
@@ -863,6 +866,21 @@ function bannerHtml() {
   return `<div class="ability-banner p${b.by}" style="${b.ad}" aria-live="polite" aria-label="${esc(you(b.by))} used ${AB[b.ability].name}"><span class="ab-name">${AB[b.ability].name}</span></div>`;
 }
 const vShowPending = key => !!fx.find(f => f.type === "score" && f.owner && f.start > fxNow() && f.petrify.includes(key));
+// How far each disc falls between two boards (column by column, movable pieces keep their order).
+function settleMap(from, to) {
+  const out = {}, R = to.grid.length, C = to.grid[0].length, upG = to.gdir === -1;
+  for (let c = 0; c < C; c++) {
+    const a = [], b = [];
+    for (let i = 0; i < R; i++) {
+      const r = upG ? i : R - 1 - i; // floor side first
+      const va = from.grid[r][c], vb = to.grid[r][c];
+      if (va && va !== 5) a.push(r);
+      if (vb && vb !== 5) b.push(r);
+    }
+    b.forEach((r, i) => { if (a[i] !== undefined && a[i] !== r) out[r + "," + c] = Math.abs(a[i] - r); });
+  }
+  return out;
+}
 function clearedFall(f, r, c, gup) {
   let n = 0, maxRow = -1, minRow = ROWS;
   for (const grp of f.clears) for (const k of grp.cells) { const [rr, cc] = k.split(",").map(Number); if (cc === c) { n++; maxRow = Math.max(maxRow, rr); minRow = Math.min(minRow, rr); } }
@@ -871,11 +889,13 @@ function clearedFall(f, r, c, gup) {
 }
 
 function renderPlay() {
+  syncDims(flip && flip.phase === 1 && flip.type === "rotate" ? flip.prev : V.game);
   const rt = isRT(), now = hostNow();
   const g0 = V.game, g = rt ? { ...g0, cur: V.local ? modeSeat : V.seat } : g0;
   const myTurn = rt ? !g.over && !busy : g.cur === V.seat && !g.over && !busy;
   const canDropCol = c => (rt ? RT.canDrop(g, V.seat, c, now) : CW.canDrop(g, c));
-  const shown = flip && flip.phase === 1 ? { ...g, grid: flip.prev.grid, anc: flip.prev.anc } : g;
+  const shownSrc = flip && flip.phase === 1 ? (flip.type === "shift" ? flip.mid : flip.prev) : null;
+  const shown = shownSrc ? { ...g, grid: shownSrc.grid, anc: shownSrc.anc } : g;
   const cleared = new Map();
   if (flip && flip.type === "clear") {
     flip.clears.forEach(f => f.cells.forEach((k, i) => cleared.set(k, i)));
@@ -903,6 +923,7 @@ function renderPlay() {
     for (let r = 0; r < ROWS; r++) {
       const v = shown.grid[r][c]; let cc = "cell";
       if (myTurn && (mt === "own" || mt === "pair" || mt === "cell") && CW.validCell(g, mode, r, c, swapSel)) cc += " tgt";
+      if (myTurn && mt === "row") cc += rowSel === r ? " sel" : rowSel === null && CW.validCell(g, mode, r, c) ? " tgt" : "";
       if (swapSel && swapSel[0] === r && swapSel[1] === c) cc += " sel";
       const wi = wins.get(r + "," + c);
       if (wi !== undefined) cc += " win";
@@ -912,7 +933,8 @@ function renderPlay() {
         let n = 0, extra = "", style = "", vShow = v;
         const dfx = fxFind("drop", f => at(f.r, f.c));
         if (dfx) { n = gup ? ROWS - r : r + 1; style += dfx.ad; }
-        if (flip && flip.phase === 2 && (flip.type === "gravity" || (flip.type !== "clear" && flip.c === c))) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
+        if (flip && flip.phase === 2 && (flip.type === "rotate" || flip.type === "shift")) n = flip.settle[r + "," + c] || 0;
+        else if (flip && flip.phase === 2 && (flip.type === "gravity" || (flip.type !== "clear" && flip.c === c))) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
         if (flip && flip.phase === 2 && flip.type === "clear") n = clearedFall(flip, r, c, gup);
         if (flip && flip.phase === 1 && flip.type === "clear" && flip.ev && flip.ev.type === "drop" && at(flip.ev.r, flip.ev.c)) n = gup ? ROWS - r : r + 1;
         if (flip && flip.phase === 1 && flip.type === "clear" && cleared.has(r + "," + c)) { extra += flip.ev && flip.ev.type === "boom" ? " boomed" : " scored"; style += `--wd:${(0.25 + cleared.get(r + "," + c) * 0.06).toFixed(2)}s;`; }
@@ -931,6 +953,11 @@ function renderPlay() {
           const fallN = Math.abs(pufx.r - pufx.from);
           if (fallN) { const [k, st] = motion(fallN); extra += k; style += st + pufx.ad; } else { extra += " punchin"; style += pufx.ad; }
           disc0 = `<div class="shock own${pufx.by || ""}" style="${pufx.ad}"></div>`;
+        }
+        if (flip && flip.phase === 1 && flip.type === "shift" && r === flip.r && v !== 5) {
+          const nonFixed = []; for (let cc = 0; cc < COLS; cc++) if (flip.prev.grid[r][cc] !== 5) nonFixed.push(cc);
+          const i = nonFixed.indexOf(c), fromC = flip.dir === "right" ? nonFixed[(i - 1 + nonFixed.length) % nonFixed.length] : nonFixed[(i + 1) % nonFixed.length];
+          extra += " slide"; style += `--sx:calc(${fromC - c} * (116.3% + 7px));--sy:0px;`;
         }
         const afx = fxFind("anchor", f => at(f.r, f.c));
         if (afx) { extra += " anc-in"; style += afx.ad; }
@@ -954,7 +981,7 @@ function renderPlay() {
       const wd = wi !== undefined ? `style="--wd:${(0.3 + wi * 0.15).toFixed(2)}s"` : "";
       cells += `<div class="${cc}" data-r="${r}" data-c="${c}" ${wd}>${disc}</div>`;
     }
-    cols += `<div class="${cls}" ${colStyle ? `style="${colStyle}"` : ""} role="button" aria-label="Column ${L[c]}">${cells}</div>`;
+    cols += `<div class="${cls}" style="grid-template-rows:repeat(${ROWS},auto);${colStyle}" role="button" aria-label="Column ${L[c]}">${cells}</div>`;
   }
   const dd = fxFind("double");
   // Board class + inline style (column count, and a resumed Double Drop flash).
@@ -984,9 +1011,12 @@ function renderPlay() {
   ${dc}
   <div class="players" style="grid-template-columns:repeat(${V.n || 2},1fr)">${turnOrder().map(panel).join("")}</div>
   <p class="status" aria-live="polite">${statusText()}</p>
-  <div class="board-wrap"><div class="board ${!rt && showWin && g.result ? "won" : ""} ${gravCls()} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>${bannerHtml()}
+  <div class="board-wrap"><div class="board ${!rt && showWin && g.result ? "won" : ""} ${gravCls()} ${flip && flip.phase === 1 && flip.type === "rotate" ? "rot-" + flip.dir : ""} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>${bannerHtml()}
   <div class="letters" style="grid-template-columns:repeat(${COLS},1fr)">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
-  ${g.gdir === -1 ? `<div class="gravtag">Gravity is up: discs rise from the bottom</div>` : ""}
+  ${g.gdir === -1 ? `<div class="gravtag">Gravity is up: discs rise from the bottom${g.gravRevert ? ` · flips back at the start of ${g.gravRevert.by === V.seat ? "your" : you(g.gravRevert.by) + "'s"} ${["", "next", "2nd", "3rd"][g.gravRevert.left] || ""} turn` : ""}</div>` : ""}
+  ${myTurn && (mode === "rotate" || (mode === "shift" && rowSel !== null)) ? `<div class="choice">
+    <button class="primary" data-dir="left">${mode === "rotate" ? "⟲ Turn left" : "← Shift left"}</button>
+    <button class="primary" data-dir="right">${mode === "rotate" ? "Turn right ⟳" : "Shift right →"}</button></div>` : ""}
   ${tray}
   <p class="err">${err}</p>
   ${rt ? `<details><summary>Rules</summary><ul>
@@ -1036,6 +1066,7 @@ function renderTabletop({ g, g0, now, cols, pend, ddFlash }) {
 
 /* ================= input ================= */
 function sendAct(type, p) {
+  if (type === "ability") rowSel = null;
   if (V && V.local && isRT() && type === "ability" && p.__seat == null) p.__seat = modeSeat;
   if (type === "ability") { mode = null; swapSel = null; }
   act(type, p, res => { if (res && res.error) { localMsg = res.error; mode = null; swapSel = null; render(); } });
@@ -1138,7 +1169,12 @@ app.addEventListener("click", e => {
     if (rt ? !RT.isReady(g, V.seat, id, hostNow()) : !CW.abilityReady(g, id, V.myPicks)) return;
     if (!CW.hasTarget(g, id)) { localMsg = `${AB[id].name} has no valid target right now.`; return render(); }
     if (AB[id].t === "none") return sendAct("ability", { id });
-    mode = id; swapSel = null; return render();
+    mode = id; swapSel = null; rowSel = null; return render();
+  }
+  const dirBtn = e.target.closest("[data-dir]");
+  if (dirBtn && (mode === "rotate" || (mode === "shift" && rowSel !== null))) {
+    const dir = dirBtn.dataset.dir, payload = mode === "rotate" ? { id: "rotate", dir } : { id: "shift", r: rowSel, dir };
+    rowSel = null; return sendAct("ability", payload);
   }
   const cell = e.target.closest(".cell");
   if (!cell) return;
@@ -1152,6 +1188,11 @@ app.addEventListener("click", e => {
     if (!CW.validCol(g, mode, c)) { localMsg = "Not a valid column. " + PROMPT[mode](); return render(); }
     return sendAct("ability", { id: mode, c });
   }
+  if (mode === "shift") {
+    if (!CW.validCell(g, "shift", r, c)) { localMsg = "That row has nothing to shift."; return render(); }
+    rowSel = rowSel === r ? null : r; return render();
+  }
+  if (mode === "rotate") return;
   if (mode === "punch") {
     if (!CW.validCell(g, "punch", r, c)) { localMsg = "Punch In can't target an enemy disc or your own disc."; return render(); }
     return sendAct("ability", { id: "punch", r, c });

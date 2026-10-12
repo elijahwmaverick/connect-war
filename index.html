@@ -328,15 +328,23 @@ details ul{padding-left:18px;margin:8px 0 0}
 .fours i.f{background:#cfd3da;box-shadow:inset 0 0 0 2px var(--pc)}
 .fours span{margin-left:6px;font-family:var(--fd);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
 .pl .nm .score{font-family:var(--fd);font-size:16px;color:var(--pc)}
+
+/* Rotate: the whole board turns before the discs fall */
+.board.rot-right{animation:rotR .6s cubic-bezier(.5,0,.3,1) forwards}
+.board.rot-left{animation:rotL .6s cubic-bezier(.5,0,.3,1) forwards}
+@keyframes rotR{to{transform:rotate(90deg) scale(.86)}}
+@keyframes rotL{to{transform:rotate(-90deg) scale(.86)}}
+.choice{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media (prefers-reduced-motion:reduce){.board.rot-right,.board.rot-left{animation:none}}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script>window.CW_VERSION="20261012020153"</script>
-<script src="config.js?v=20261012020153"></script>
-<script src="game.js?v=20261012020153"></script>
-<script src="rt.js?v=20261012020153"></script>
-<script src="app.js?v=20261012020153"></script>
+<script>window.CW_VERSION="20261012021641"</script>
+<script src="config.js?v=20261012021641"></script>
+<script src="game.js?v=20261012021641"></script>
+<script src="rt.js?v=20261012021641"></script>
+<script src="app.js?v=20261012021641"></script>
 </body>
 </html>
