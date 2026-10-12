@@ -375,7 +375,8 @@ let mode = null, swapSel = null, localMsg = "";
 let lastSeq = -1, lastOver = false, showOver = false, flip = null, busy = false, confirmMenu = false;
 // Short animations in flight. Re-renders resume them part-way (negative animation-delay) instead of restarting or dropping them.
 let fx = [];
-const FX_MS = { punch: 650, drop: 450, freeze: 650, anchor: 550, swap: 500, lift: 600, double: 750, score: 900, contest: 1100, reinforce: 450 };
+let winAt = 0; // when the winning four may light up (after the winning move has animated)
+const FX_MS = { banner: 1500, punch: 650, drop: 450, freeze: 650, anchor: 550, swap: 500, lift: 600, double: 750, score: 900, contest: 1100, reinforce: 450 };
 // Full Auto drop-charge readout, e.g. "Drops ●●○ · 1.4s".
 function dropText(g, seat, now) {
   const ch = RT.chargesAt(g, seat, now);
@@ -404,6 +405,7 @@ function onView(v) {
   if (g) {
     if (g.seq !== lastSeq) {
       flip = null; busy = false;
+      if (lastSeq !== -1 && g.ev && g.ev.ability) fx.push({ type: "banner", ability: g.ev.ability, by: g.ev.by, start: fxNow() });
       if (lastSeq !== -1 && g.ev) {
         const t = g.ev.type;
         if (t === "flip" || t === "pop" || t === "gravity") flip = { type: t, c: g.ev.c, prev: g.ev.prev, phase: 1 };
@@ -416,11 +418,16 @@ function onView(v) {
       } else { mode = null; swapSel = null; localMsg = ""; }
       if (g.over && !lastOver) {
         showOver = lastSeq === -1;
+        // Let the move that won play out before the four lights up.
+        const t = g.ev && g.ev.type;
+        const moveMs = lastSeq === -1 ? 0 : flip ? ({ pop: 420, clear: 820, gravity: 340 }[flip.type] || 560) + 480 : (FX_MS[t === "block" ? "drop" : t] || 0) + 60;
+        winAt = fxNow() + moveMs;
+        if (moveMs) setTimeout(() => { if (V && V.game && V.game.over && !busy) render(); }, moveMs + 30);
         if (!showOver) setTimeout(() => {
           showOver = true;
           const w = document.querySelector(".board-wrap");
           if (w && V && V.game && V.game.over && !w.querySelector(".over")) w.insertAdjacentHTML("beforeend", overHtml());
-        }, (flip ? 600 : 0) + (g.result ? 2200 : 900));
+        }, moveMs + (g.result ? 2200 : 900));
       }
       if (!g.over) showOver = false;
       lastOver = g.over; lastSeq = g.seq;
@@ -650,9 +657,17 @@ const PROMPT = {
   grenade: () => "Grenade: tap a column to drop it. It explodes 2 seconds later."
 };
 
+// Describes the move that just happened, without revealing its result yet.
+function moveText(g) {
+  const ev = g.ev || {}, who = you(ev.by || g.result || 0);
+  if (ev.ability && AB[ev.ability]) return `${who} used ${AB[ev.ability].name}.`;
+  if (ev.type === "drop" && typeof ev.c === "number") return `${you(g.result)} dropped in ${L[ev.c]}.`;
+  return "";
+}
 function statusText() {
   const g = V.game;
   if (localMsg) return localMsg;
+  if (g.over && g.win && g.win.length && (flip || fxNow() < winAt)) return moveText(g) || "…";
   if (isRT()) {
     if (g.over && V.local) return `Player ${g.result} wins ${g.score[g.result]}–${g.score[opp(g.result)]}.`;
     if (g.over) return g.result === V.seat ? `You win ${g.score[V.seat]}–${g.score[opp(V.seat)]}.` : `You lose ${g.score[V.seat]}–${g.score[opp(V.seat)]}.`;
@@ -699,6 +714,12 @@ function overHtml() {
 
 // After fours are removed, discs that were above them fall by the number removed in that column.
 const gravCls = () => (flip && flip.phase === 1 && flip.type === "gravity" ? "grav1" : "");
+function bannerHtml() {
+  const b = fxFind("banner");
+  if (!b || !AB[b.ability]) return "";
+  const who = you(b.by);
+  return `<div class="ability-banner p${b.by}" style="${b.ad}" aria-live="polite"><span class="ab-who">${who}</span><span class="ab-name">${AB[b.ability].name}</span></div>`;
+}
 function clearedFall(f, r, c, gup) {
   let n = 0, maxRow = -1, minRow = ROWS;
   for (const grp of f.clears) for (const k of grp.cells) { const [rr, cc] = k.split(",").map(Number); if (cc === c) { n++; maxRow = Math.max(maxRow, rr); minRow = Math.min(minRow, rr); } }
@@ -718,7 +739,8 @@ function renderPlay() {
   }
   const pend = rt && g.pending ? new Set(g.pending.cells) : null;
   const mt = mode ? AB[mode].t : null;
-  const wins = new Map(g.over && !(flip && flip.phase === 1) ? g.win.map((k, i) => [k, i]) : []);
+  const showWin = g.over && !flip && fxNow() >= winAt;
+  const wins = new Map(showWin ? g.win.map((k, i) => [k, i]) : []);
   let cols = "";
   const gup = g.gdir === -1;
   // Disc motion toward the current floor: falls when gravity is down, rises when it is up.
@@ -816,7 +838,7 @@ function renderPlay() {
   ${dc}
   <div class="players" style="grid-template-columns:repeat(${V.n || 2},1fr)">${turnOrder().map(panel).join("")}</div>
   <p class="status" aria-live="polite">${statusText()}</p>
-  <div class="board-wrap"><div class="board ${!rt && g.over && g.result && !(flip && flip.phase === 1) ? "won" : ""} ${gravCls()} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>
+  <div class="board-wrap"><div class="board ${!rt && showWin && g.result ? "won" : ""} ${gravCls()} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>${bannerHtml()}
   <div class="letters" style="grid-template-columns:repeat(${COLS},1fr)">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
   ${g.gdir === -1 ? `<div class="gravtag">Gravity is up: discs rise from the bottom</div>` : ""}
   ${tray}
@@ -859,7 +881,7 @@ function renderTabletop({ g, g0, now, cols, pend, ddFlash }) {
   app.innerHTML = `${header(`<div class="timer mclock ${g0.sudden ? "warn" : ""}"><span id="mclock">${g0.sudden ? "SUDDEN DEATH" : fmtClock(g0.endsAt - now)}</span></div>`)}
   ${side(2)}
   <p class="status tabletop-status" aria-live="polite">${status}${g0.gdir === -1 ? ` <span class="gravtag inline">Gravity up</span>` : ""}</p>
-  <div class="board-wrap"><div class="board ${gravCls()} ${g0.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g0.over && showOver ? overHtml() : ""}</div>
+  <div class="board-wrap"><div class="board ${gravCls()} ${g0.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g0.over && showOver ? overHtml() : ""}</div>${bannerHtml()}
   ${side(1)}
   ${g0.over ? `<button class="ghost" data-act="leave">Leave game</button>` : ""}`;
 }

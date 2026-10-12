@@ -287,6 +287,16 @@ details ul{padding-left:18px;margin:8px 0 0}
 /* Keep the header on one line on narrow phones */
 .top h1,.exit{white-space:nowrap}
 @media (max-width:440px){.top h1{font-size:16px;letter-spacing:.1em}.tbar{width:56px}.exit{padding:5px 8px;font-size:11px}.hdr-right{gap:8px}}
+
+/* Ability banner: a band that sweeps across the screen naming the ability */
+.ability-banner{position:fixed;left:0;right:0;top:15%;z-index:30;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:2px;
+  padding-block:10px;background:linear-gradient(90deg,transparent,rgba(12,15,20,.92) 18%,rgba(12,15,20,.92) 82%,transparent);
+  border-block:2px solid var(--pc,var(--gold));animation:bannersweep 1.45s cubic-bezier(.2,.8,.2,1) forwards;animation-delay:var(--ad,0s)}
+.ability-banner.p1{--pc:var(--p1)}.ability-banner.p2{--pc:var(--p2)}.ability-banner.p3{--pc:var(--p3)}
+.ability-banner .ab-who{font-family:var(--fd);font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--pc)}
+.ability-banner .ab-name{font-family:var(--fd);font-weight:700;font-size:34px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg);text-shadow:0 0 18px var(--pc)}
+@keyframes bannersweep{0%{transform:translateX(-100%) skewX(-12deg);opacity:0}16%{transform:translateX(0) skewX(0);opacity:1}78%{transform:translateX(0);opacity:1}100%{transform:translateX(100%) skewX(12deg);opacity:0}}
+@media (prefers-reduced-motion:reduce){.ability-banner{animation:fadeout 1.45s forwards}@keyframes fadeout{80%{opacity:1}100%{opacity:0}}}
 </style>
 </head>
 <body>

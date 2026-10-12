@@ -174,6 +174,7 @@
     const pre = ev.prev;
     settle(g, p, ev, now);
     if (pre) { ev.prev = pre; delete ev.clears; }
+    ev.ability = id; ev.by = p;
     g.ev = ev; g.seq++;
     return null;
   }

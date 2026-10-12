@@ -240,6 +240,7 @@
     if (id === "grenade") { const r = topEmpty(g, c); placeGrenade(g, r, c, Date.now()); g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} dropped a grenade in ${L[c]}.`; }
     if (id === "gravity") { ev = { type: "gravity", prev: clone(g) }; flipGravity(g); note = `Player ${p} flipped gravity. Discs now fall ${up(g) ? "up" : "down"}.`; }
     if (id === "double") { g.dd = true; g.dropsLeft = 2; note = `Player ${p} used Double Drop.`; }
+    ev.ability = id; ev.by = p;
     g.ev = ev; g.seq++; g.note = note;
     if (resolve(g)) return null;
     if (!anyDrop(g)) { endTurn(g); g.note = note + ` Player ${p} has no open column, so the turn ends.` + g.note; }
