@@ -498,7 +498,7 @@ function onView(v) {
         // Discs that this move turns to stone still have to travel with everything else first.
         const pend = new Set(g.ev.scores ? g.ev.scores.flatMap(sc => sc.cells) : []);
         if (t === "flip" || t === "pop" || t === "gravity") flip = { type: t, c: g.ev.c, prev: g.ev.prev, phase: 1, settle: t === "gravity" && g.ev.prev ? settleMap(g.ev.prev, g, pend) : null };
-        else if (t === "rotate" || t === "shift" || t === "insert") flip = { type: t, dir: g.ev.dir || g.ev.side, r: g.ev.r, ev_r: g.ev.r, ev_c: g.ev.c, prev: g.ev.prev, mid: g.ev.mid, settle: settleMap(g.ev.mid, g, pend), phase: 1 };
+        else if (t === "rotate" || t === "shift" || t === "insert") flip = { type: t, dir: g.ev.dir || g.ev.side, r: g.ev.r, ev_r: g.ev.r, ev_c: g.ev.c, knock: g.ev.knock || null, broke: g.ev.broke ?? null, prev: g.ev.prev, mid: g.ev.mid, settle: settleMap(g.ev.mid, g, pend), phase: 1 };
         else if (g.ev.clears && g.ev.prev) flip = { type: "clear", prev: g.ev.prev, clears: g.ev.clears, phase: 1, ev: g.ev };
         else fx.push({ ...g.ev, type: t === "block" ? "drop" : t, start: fxNow() });
       }
@@ -986,6 +986,10 @@ function renderPlay() {
           const fromC = flip.dir === "left" ? -1 : COLS;
           extra += " slide"; style += `--sx:calc(${fromC - c} * (116.3% + 7px));--sy:0px;`;
         }
+        // The piece it knocked back slides one cell, starting as the inserted disc arrives.
+        if (flip && flip.phase === 1 && flip.type === "insert" && flip.knock && r === flip.ev_r && c === flip.knock.to) {
+          extra += " slide knocked"; style += `--sx:calc(${flip.knock.from - c} * (116.3% + 7px));--sy:0px;`;
+        }
         else if (flip && flip.phase === 2 && flip.type === "gravity" && flip.settle) n = flip.settle[r + "," + c] || 0;
         else if (flip && flip.phase === 2 && (flip.type === "gravity" || (flip.type !== "clear" && flip.c === c))) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
         if (flip && flip.phase === 2 && flip.type === "clear") n = clearedFall(flip, r, c, gup);
@@ -1031,6 +1035,7 @@ function renderPlay() {
       if (flip && flip.phase === 1 && flip.ev && flip.ev.type === "boom" && at(flip.ev.r, flip.ev.c)) disc += `<div class="blast own${flip.ev.by || ""}"></div>`;
       const shf = fxFind("drop", f => f.broke != null && at(f.broke, f.c));
       if (shf) disc += `<div class="disc d5 shatter" style="${shf.ad}"></div>`;
+      if (flip && flip.phase === 1 && flip.type === "insert" && flip.broke != null && at(flip.r, flip.broke)) disc += `<div class="disc d5 shatter"></div>`;
       const wd = wi !== undefined ? `style="--wd:${(0.3 + wi * 0.15).toFixed(2)}s"` : "";
       cells += `<div class="${cc}" data-r="${r}" data-c="${c}" ${wd}>${disc}</div>`;
     }

@@ -367,15 +367,20 @@ details ul{padding-left:18px;margin:8px 0 0}
 .board-wrap.square .board.rot-left{animation-name:rotLsq}
 @keyframes rotRsq{to{transform:rotate(90deg)}}
 @keyframes rotLsq{to{transform:rotate(-90deg)}}
+
+/* Insert knockback: the struck piece waits for the impact, then slides one cell */
+.disc.slide.knocked{animation:knocked .46s cubic-bezier(.3,0,.2,1)}
+@keyframes knocked{0%,45%{transform:translate(var(--sx),var(--sy))}70%{transform:translate(calc(var(--sx) * -0.08),0)}100%{transform:none}}
+@media (prefers-reduced-motion:reduce){.disc.slide.knocked{animation:none}}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script>window.CW_VERSION="20261012030003"</script>
-<script src="config.js?v=20261012030003"></script>
-<script src="game.js?v=20261012030003"></script>
-<script src="rt.js?v=20261012030003"></script>
-<script src="app.js?v=20261012030003"></script>
+<script>window.CW_VERSION="20261012032053"</script>
+<script src="config.js?v=20261012032053"></script>
+<script src="game.js?v=20261012032053"></script>
+<script src="rt.js?v=20261012032053"></script>
+<script src="app.js?v=20261012032053"></script>
 </body>
 </html>

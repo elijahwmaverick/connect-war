@@ -157,7 +157,7 @@
       [g.grid[a.r][a.c], g.grid[a.r2][a.c2]] = [g.grid[a.r2][a.c2], g.grid[a.r][a.c]];
       ev = { type: "swap", r: a.r, c: a.c, r2: a.r2, c2: a.c2 }; g.last = null; note = `Player ${p} swapped two discs.`;
     }
-    if (id === "grenade") { const r = C.topEmpty(g, c); C.placeGrenade(g, r, c, now, p); g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} dropped a grenade in ${L[c]}.`; }
+    if (id === "grenade") { ev = C.dropGrenade(g, c, now, p); note = `Player ${p} dropped a grenade in ${L[c]}${ev.broke !== undefined ? " and smashed a stone" : ""}.`; }
     if (id === "insert") { ev = C.insertFromSide(g, a.r, a.dir, p); note = `Player ${p} inserted a disc from the ${a.dir}.`; }
     if (id === "punch") {
       if (g.grid[a.r][c] === 4) g.bombs = (g.bombs || []).filter(b => b.id !== g.anc[a.r][c]);

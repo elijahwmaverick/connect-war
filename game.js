@@ -220,7 +220,8 @@
     if (c < 0 || c >= COLS) return false;
     const p = g.cur;
     switch (id) {
-      case "block": case "freeze": case "grenade": return topEmpty(g, c) >= 0;
+      case "block": case "freeze": return topEmpty(g, c) >= 0;
+      case "grenade": return columnOpen(g, c);
       case "lift": { const t = topDisc(g, c); return t >= 0 && g.grid[t][c] === PV(p); }
       case "pop": { const f = floorRow(g); const v = g.grid[f][c]; return isDisc(v) && v !== PV(p) && !g.anc[f][c]; }
       case "flip": return count(g, c) >= 2;
@@ -293,7 +294,7 @@
       ev = { type: "swap", r: a.r, c: a.c, r2: a.r2, c2: a.c2 };
       g.last = null; note = `Player ${p} swapped two discs.`;
     }
-    if (id === "grenade") { const r = topEmpty(g, c); placeGrenade(g, r, c, Date.now(), p); g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} dropped a grenade in ${L[c]}.`; }
+    if (id === "grenade") { ev = dropGrenade(g, c, Date.now(), p); note = `Player ${p} dropped a grenade in ${L[c]}${ev.broke !== undefined ? " and smashed a stone" : ""}.`; }
     if (id === "punch") {
       if (g.grid[a.r][c] === 4) g.bombs = (g.bombs || []).filter(b => b.id !== g.anc[a.r][c]);
       g.grid[a.r][c] = PV(p); g.anc[a.r][c] = "punch";
@@ -325,6 +326,16 @@
     g.bombSeq = (g.bombSeq || 0) + 1;
     g.grid[r][c] = 4; g.anc[r][c] = g.bombSeq;
     (g.bombs = g.bombs || []).push({ id: g.bombSeq, until: now + FUSE_MS, by });
+  }
+  // A grenade falls like a disc: it smashes the first fixed stone it meets, lands, and its fuse starts.
+  function dropGrenade(g, c, now, by) {
+    const l = landing(g, c);
+    if (l.broke !== null) { g.grid[l.broke][c] = 0; g.anc[l.broke][c] = false; }
+    const r = l.r >= 0 ? l.r : l.broke;
+    placeGrenade(g, r, c, now, by); g.last = { r, c };
+    const ev = { type: "block", r, c };
+    if (l.broke !== null) ev.broke = l.broke;
+    return ev;
   }
   // Explode one grenade: destroy it and its four orthogonal neighbours, then let the board settle.
   function detonate(g, id) {
@@ -385,19 +396,46 @@
     for (let c = 0; c < COLS; c++) { const v = g.grid[r][c]; if (v !== FIXED) { slots++; if (v) pieces++; } }
     return pieces > 0 && slots > 1;
   }
-  // Insert: the edge cell of row r on that side must be empty.
-  const sideOpen = (g, r, side) => r >= 0 && r < ROWS && (side === "left" || side === "right") && !g.grid[r][side === "left" ? 0 : COLS - 1];
-  // Slide a piece in from the side until the next cell is occupied (or the far wall), then let it fall.
+  // Insert path: the piece enters row r from one side and slides until something stops it.
+  //  - the first fixed stone it meets shatters and it keeps going;
+  //  - a movable piece with an empty cell right behind it is knocked one step and the inserted piece takes its spot (once);
+  //  - otherwise it stops in front of whatever it hits (or at the far wall).
+  // Returns { pos, broke, knock } or null when nothing can enter from that side.
+  function insertPath(g, r, side) {
+    if (r < 0 || r >= ROWS || (side !== "left" && side !== "right")) return null;
+    const step = side === "left" ? 1 : -1;
+    let pos = side === "left" ? -1 : COLS, broke = null, knock = null;
+    for (;;) {
+      const nx = pos + step;
+      if (nx < 0 || nx >= COLS) break;
+      const v = g.grid[r][nx];
+      if (!v || nx === broke) { pos = nx; continue; }
+      if (v === FIXED && broke === null) { broke = nx; pos = nx; continue; }
+      const beyond = nx + step;
+      if (v !== FIXED && beyond >= 0 && beyond < COLS && (!g.grid[r][beyond] || beyond === broke)) { knock = { from: nx, to: beyond }; pos = nx; }
+      break;
+    }
+    if (pos < 0 || pos >= COLS) return null;
+    return { pos, broke, knock };
+  }
+  const sideOpen = (g, r, side) => !!insertPath(g, r, side);
+  // Slide a piece in from the side (breaking / knocking as above), then let everything fall.
   function insertFromSide(g, r, side, value) {
-    const prev = clone(g), step = side === "left" ? 1 : -1;
-    let c = side === "left" ? 0 : COLS - 1;
-    while (c + step >= 0 && c + step < COLS && !g.grid[r][c + step]) c += step;
+    const prev = clone(g), path = insertPath(g, r, side);
+    const c = path.pos;
+    if (path.broke !== null) { g.grid[r][path.broke] = 0; g.anc[r][path.broke] = false; }
+    if (path.knock) {
+      const { from, to } = path.knock;
+      g.grid[r][to] = g.grid[r][from]; g.anc[r][to] = g.anc[r][from];
+      g.grid[r][from] = 0; g.anc[r][from] = false;
+    }
     g.grid[r][c] = value; g.anc[r][c] = "ins";
     const mid = clone(g); mid.anc[r][c] = false;
     compactCol(g, c);
     let r2 = r; for (let rr = 0; rr < ROWS; rr++) if (g.anc[rr][c] === "ins") { r2 = rr; g.anc[rr][c] = false; }
     g.last = { r: r2, c };
-    return { type: "insert", r, c, side, r2, prev, mid };
+    if (path.knock) compactCol(g, path.knock.to);
+    return { type: "insert", r, c, side, r2, prev, mid, broke: path.broke, knock: path.knock };
   }
   // Slide every movable piece in row r one step; the end piece wraps around. Fixed stones stay put.
   function shiftRow(g, r, dir) {
@@ -436,7 +474,7 @@
   const api = { get ROWS() { return ROWS; }, get COLS() { return COLS; }, get L() { return L; }, setDims, PV, isDisc, nextP, others,
     MAXE, TURN_S, AB, opp, newGame, canDrop, drop, ability, timeout, validCol, validCell, hasTarget, abilityReady, count,
     FIXED, segs, compactCol, flipCol, reinforce, floorSeg,
-    TARGET, landing, columnOpen, rotateBoard, shiftRow, rowMovable, sideOpen, insertFromSide,
+    TARGET, landing, columnOpen, dropGrenade, insertPath, rotateBoard, shiftRow, rowMovable, sideOpen, insertFromSide,
     lines, topEmpty, topDisc, floorRow, isFull, flipGravity, up, stack, writeStack, clone, partner, blank, placeGrenade, detonate, tickBombs, FUSE_MS };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.CW = api;
 })(typeof window !== "undefined" ? window : globalThis);
