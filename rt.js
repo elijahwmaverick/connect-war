@@ -9,12 +9,14 @@
   const GCD = 150; // global cooldown after any action
   const DROP_CD = 2500, MAX_CHARGES = 3, MATCH_MS = 5 * 60 * 1000, TARGET = 5, FREEZE_MS = 5000;
   // Abilities available in Full Auto (Anchor, Lift, Pop and Double Drop are turn-based only).
-  const POOL = ["block", "freeze", "swap", "flip", "grenade", "reinforce", "gravity", "punch", "insert"];
-  const CD = { insert: 5000, punch: 5000, block: 3500, freeze: 5000, anchor: 5000, lift: 5000, pop: 7500, swap: 10000, double: 10000, flip: 10000, gravity: 15000, grenade: 7500, reinforce: 6000 };
+  const POOL = ["block", "freeze", "swap", "flip", "grenade", "reinforce", "gravity", "punch", "insert", "flask"];
+  const CD = { flask: 7500, insert: 5000, punch: 5000, block: 3500, freeze: 5000, anchor: 5000, lift: 5000, pop: 7500, swap: 10000, double: 10000, flip: 10000, gravity: 15000, grenade: 7500, reinforce: 6000 };
   const DESC = {
     ...Object.fromEntries(Object.entries(AB).map(([k, v]) => [k, v.desc])),
     freeze: "Lock a column for your opponent for 5 seconds.",
-    double: "Instantly refill all 3 drop charges."
+    double: "Instantly refill all 3 drop charges.",
+    insert: AB.insert.desc.replace(" Ends your turn.", ""),
+    flask: AB.flask.desc.replace(" Ends your turn.", "")
   };
 
   function newGame(now) {
@@ -143,6 +145,7 @@
     if (id === "swap" && !C.partner(g, a.r, a.c, a.r2, a.c2)) return "Pick two adjacent, unanchored discs of different colors.";
     if (id === "punch" && !C.validCell(g, id, a.r, a.c)) return "Punch In can't target an enemy disc or your own disc.";
     if (id === "insert" && !C.sideOpen(g, a.r, a.dir)) return "That edge of the row is blocked.";
+    if (id === "flask" && !C.flaskSide(g, a.r, a.c)) return "The flask can't reach that cell.";
 
     let ev = { type: id }, note = "";
     const p = seat;
@@ -159,6 +162,7 @@
     }
     if (id === "grenade") { ev = C.dropGrenade(g, c, now, p); note = `Player ${p} dropped a grenade in ${L[c]}${ev.broke !== undefined ? " and smashed a stone" : ""}.`; }
     if (id === "insert") { ev = C.insertFromSide(g, a.r, a.dir, p); note = `Player ${p} inserted a disc from the ${a.dir}.`; }
+    if (id === "flask") { ev = C.throwFlask(g, a.r, c); note = `Player ${p} threw a Stone Flask.`; }
     if (id === "punch") {
       if (g.grid[a.r][c] === 4) g.bombs = (g.bombs || []).filter(b => b.id !== g.anc[a.r][c]);
       g.grid[a.r][c] = p; g.anc[a.r][c] = "punch";

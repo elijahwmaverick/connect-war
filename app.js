@@ -451,12 +451,13 @@ function moveLeadMs(ev) {
   if (t === "drop" || t === "block") return FALL_MS;
   if (t === "punch") return (ev.from !== undefined && ev.from !== ev.r ? FALL_MS : 0) + 650;
   if (t === "swap") return 500;
+  if (t === "flask") return 760;
   if (t === "reinforce") return 450;
   if (t === "lift") return 600;
   return 0;
 }
 let winAt = 0; // when the winning four may light up (after the winning move has animated)
-const FX_MS = { banner: 1500, punch: 650, drop: 450, freeze: 650, anchor: 550, swap: 500, lift: 600, double: 750, score: 900, contest: 1100, reinforce: 450 };
+const FX_MS = { banner: 1500, punch: 650, drop: 450, freeze: 650, anchor: 550, swap: 500, lift: 600, double: 750, score: 900, contest: 1100, reinforce: 450, flask: 950 };
 // Full Auto drop-charge readout, e.g. "Drops ●●○ · 1.4s".
 function dropText(g, seat, now) {
   const ch = RT.chargesAt(g, seat, now);
@@ -818,7 +819,8 @@ const PROMPT = {
   shift: () => (rowSel === null ? "Shift: tap any cell in the row you want to slide." : "Shift: pick a direction."),
   punch: () => "Punch In: tap any cell that isn't an enemy disc.",
   reinforce: () => `Reinforce: tap a column to slide your disc in from the ${V && V.game && V.game.gdir === -1 ? "top" : "bottom"}.`,
-  grenade: () => "Grenade: tap a column to drop it. It explodes 2 seconds later."
+  grenade: () => "Grenade: tap a column to drop it. It explodes 2 seconds later.",
+  flask: () => "Stone Flask: tap an empty cell with a clear line to the left or right edge."
 };
 
 // Describes the move that just happened, without revealing its result yet.
@@ -1016,6 +1018,8 @@ function renderPlay() {
           const i = nonFixed.indexOf(c), fromC = flip.dir === "right" ? nonFixed[(i - 1 + nonFixed.length) % nonFixed.length] : nonFixed[(i + 1) % nonFixed.length];
           extra += " slide"; style += `--sx:calc(${fromC - c} * (116.3% + 7px));--sy:0px;`;
         }
+        const ffx = v === 5 && fxFind("flask", f => (f.stones || []).some(([sr, sc]) => at(sr, sc)));
+        if (ffx) { extra += " stonein"; style += ffx.ad; }
         const afx = fxFind("anchor", f => at(f.r, f.c));
         if (afx) { extra += " anc-in"; style += afx.ad; }
         const sfx = fxFind("swap", f => at(f.r, f.c) || at(f.r2, f.c2));
@@ -1033,6 +1037,11 @@ function renderPlay() {
         if (lfx) disc = `<div class="disc d${lfx.v} lift-out${gup ? " down" : ""}" style="${lfx.ad}"></div>`;
       }
       if (flip && flip.phase === 1 && flip.ev && flip.ev.type === "boom" && at(flip.ev.r, flip.ev.c)) disc += `<div class="blast own${flip.ev.by || ""}"></div>`;
+      const flx = fxFind("flask", f => at(f.r, f.c));
+      if (flx) {
+        const fromC = flx.side === "left" ? -1 : COLS;
+        disc += `<div class="flaskfly own${flx.by || ""}" style="--sx:calc(${fromC - c} * (116.3% + 7px));${flx.ad}"></div><div class="blast flaskburst own${flx.by || ""}" style="${flx.ad}"></div>`;
+      }
       const shf = fxFind("drop", f => f.broke != null && at(f.broke, f.c));
       if (shf) disc += `<div class="disc d5 shatter" style="${shf.ad}"></div>`;
       if (flip && flip.phase === 1 && flip.type === "insert" && flip.broke != null && at(flip.r, flip.broke)) disc += `<div class="disc d5 shatter"></div>`;
@@ -1260,6 +1269,10 @@ app.addEventListener("click", e => {
     rowSel = rowSel === r ? null : r; return render();
   }
   if (mode === "rotate") return;
+  if (mode === "flask") {
+    if (!CW.validCell(g, "flask", r, c)) { localMsg = "Tap an empty cell with a clear line to the left or right edge."; return render(); }
+    return sendAct("ability", { id: "flask", r, c });
+  }
   if (mode === "punch") {
     if (!CW.validCell(g, "punch", r, c)) { localMsg = "Punch In can't target an enemy disc or your own disc."; return render(); }
     return sendAct("ability", { id: "punch", r, c });

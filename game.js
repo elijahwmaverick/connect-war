@@ -24,6 +24,7 @@
     rotate: { name: "Rotate",      cost: 5, t: "dir",  only: "tactics", desc: "Turn the board 90° left or right. That side becomes the floor and every disc falls." },
     shift:  { name: "Shift",       cost: 3, t: "row",  only: "tactics", desc: "Slide every disc in a row one space left or right. The end disc wraps around; fixed stones stay put." },
     insert: { name: "Insert",      cost: 2, t: "side", desc: "Slide your disc in from the left or right edge of a row. It stops at the first occupied cell or the far wall, then falls. Ends your turn." },
+    flask:  { name: "Stone Flask", cost: 3, t: "cell", desc: "Throw a flask in from the left or right edge to any empty cell it can reach along its row. It shatters there and turns the empty cells above, below, left and right of it into fixed stone. Ends your turn." },
     gravity:{ name: "Gravity Flip", cost: 6, t: "none", desc: "Reverse gravity. All discs fly to the other side, and new discs come from there until it's flipped again." }
   };
   const opp = p => 3 - p; // 2-player shorthand (Full Auto)
@@ -246,6 +247,7 @@
     if (id === "punch") return [0, 3, 4, FIXED].includes(g.grid[r][c]);
     if (id === "shift") return rowMovable(g, r);
     if (id === "insert") return sideOpen(g, r, "left") || sideOpen(g, r, "right");
+    if (id === "flask") return !!flaskSide(g, r, c);
     if (id === "swap") return sel ? partner(g, sel[0], sel[1], r, c) : swapFirst(g, r, c);
     return false;
   }
@@ -278,6 +280,7 @@
     if ((id === "rotate" || id === "shift") && a.dir !== "left" && a.dir !== "right") return "Pick left or right.";
     if (id === "shift" && !rowMovable(g, a.r)) return "That row has nothing to shift.";
     if (id === "insert" && !sideOpen(g, a.r, a.dir)) return "That edge of the row is blocked.";
+    if (id === "flask" && !flaskSide(g, a.r, a.c)) return "The flask can't reach that cell.";
 
     g.energy[p] -= AB[id].cost; g.abilityUsed = true;
     const c = a.c;
@@ -310,12 +313,13 @@
     }
     if (id === "rotate") { const prev = clone(g); rotateBoard(g, a.dir); const mid = clone(g); for (let cc = 0; cc < COLS; cc++) compactCol(g, cc); g.last = null; ev = { type: "rotate", dir: a.dir, prev, mid }; note = `Player ${p} rotated the board ${a.dir}.`; }
     if (id === "insert") { ev = insertFromSide(g, a.r, a.dir, PV(p)); note = `Player ${p} inserted a disc from the ${a.dir} into row ${ROWS - a.r}.`; }
+    if (id === "flask") { ev = throwFlask(g, a.r, a.c); note = `Player ${p} threw a Stone Flask into ${L[a.c]}${ROWS - a.r}.`; }
     if (id === "shift") { const prev = clone(g); shiftRow(g, a.r, a.dir); const mid = clone(g); for (let cc = 0; cc < COLS; cc++) compactCol(g, cc); g.last = null; ev = { type: "shift", r: a.r, dir: a.dir, prev, mid }; note = `Player ${p} shifted row ${ROWS - a.r} ${a.dir}.`; }
     if (id === "double") { g.dd = true; g.dropsLeft = 2; note = `Player ${p} used Double Drop.`; }
     ev.ability = id; ev.by = p;
     g.ev = ev; g.seq++; g.note = note;
     if (resolve(g)) return null;
-    if (id === "grenade" || id === "insert") { endTurn(g); return null; } // these replace your drop and end the turn
+    if (id === "grenade" || id === "insert" || id === "flask") { endTurn(g); return null; } // these replace your drop and end the turn
     if (!anyDrop(g)) { endTurn(g); g.note = note + ` Player ${p} has no open column, so the turn ends.` + g.note; }
     return null;
   }
@@ -419,6 +423,27 @@
     return { pos, broke, knock };
   }
   const sideOpen = (g, r, side) => !!insertPath(g, r, side);
+
+  // Stone Flask: thrown in from an edge along a row through empty cells, so it can burst at any
+  // empty cell with a clear line to the left or right edge (the nearer edge when both are clear).
+  function flaskSide(g, r, c) {
+    if (!inB(r, c) || g.grid[r][c]) return null;
+    let left = true, right = true;
+    for (let x = 0; x < c; x++) if (g.grid[r][x]) { left = false; break; }
+    for (let x = c + 1; x < COLS; x++) if (g.grid[r][x]) { right = false; break; }
+    if (left && right) return c <= COLS - 1 - c ? "left" : "right";
+    return left ? "left" : right ? "right" : null;
+  }
+  // The burst turns the empty cells around it into fixed stone; pieces already there stay.
+  function throwFlask(g, r, c) {
+    const side = flaskSide(g, r, c), stones = [];
+    for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      const rr = r + dr, cc = c + dc;
+      if (inB(rr, cc) && !g.grid[rr][cc]) { g.grid[rr][cc] = FIXED; g.anc[rr][cc] = false; stones.push([rr, cc]); }
+    }
+    g.last = null;
+    return { type: "flask", r, c, side, stones };
+  }
   // Slide a piece in from the side (breaking / knocking as above), then let everything fall.
   function insertFromSide(g, r, side, value) {
     const prev = clone(g), path = insertPath(g, r, side);
@@ -475,7 +500,7 @@
   const api = { get ROWS() { return ROWS; }, get COLS() { return COLS; }, get L() { return L; }, setDims, PV, isDisc, nextP, others,
     MAXE, TURN_S, AB, opp, newGame, canDrop, drop, ability, timeout, validCol, validCell, hasTarget, abilityReady, count,
     FIXED, segs, compactCol, flipCol, reinforce, floorSeg,
-    TARGET, landing, columnOpen, dropGrenade, insertPath, rotateBoard, shiftRow, rowMovable, sideOpen, insertFromSide,
+    TARGET, landing, columnOpen, dropGrenade, insertPath, flaskSide, throwFlask, rotateBoard, shiftRow, rowMovable, sideOpen, insertFromSide,
     lines, topEmpty, topDisc, floorRow, isFull, flipGravity, up, stack, writeStack, clone, partner, blank, placeGrenade, detonate, tickBombs, FUSE_MS };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.CW = api;
 })(typeof window !== "undefined" ? window : globalThis);

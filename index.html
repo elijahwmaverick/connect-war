@@ -214,6 +214,16 @@ details ul{padding-left:18px;margin:8px 0 0}
   background:radial-gradient(circle,#fff 0 12%,#ffd27a 22%,rgba(255,93,93,.85) 40%,rgba(255,93,93,0) 68%);animation:blast .45s ease-out forwards}
 @keyframes blast{0%{transform:scale(.2);opacity:1}100%{transform:scale(1.15);opacity:0}}
 @media (prefers-reduced-motion:reduce){.d4::before,.d4.fuse-hot,.disc.boomed,.blast{animation:none}}
+/* Stone Flask: a vial flies in along the row, bursts, and stone grows in the cells around it */
+.flaskfly{position:absolute;inset:24% 26% 16%;border-radius:45% 45% 50% 50%;z-index:5;pointer-events:none;opacity:0;
+  background:linear-gradient(0deg,var(--oc,#cfd3da) 0 55%,rgba(220,230,240,.35) 55%);box-shadow:inset 0 0 0 2px rgba(255,255,255,.75),0 0 8px -1px var(--oc,#fff);
+  animation:flaskfly .9s cubic-bezier(.3,0,.3,1) forwards;animation-delay:var(--ad,0s)}
+.flaskfly::before{content:"";position:absolute;left:32%;right:32%;top:-28%;height:32%;border-radius:2px 2px 0 0;background:#8a6a4a;box-shadow:inset 0 0 0 1px rgba(0,0,0,.3)}
+@keyframes flaskfly{0%{opacity:1;transform:translateX(var(--sx)) rotate(-300deg)}40%{opacity:1;transform:none}46%{opacity:0;transform:scale(1.4)}100%{opacity:0}}
+.blast.flaskburst{inset:-90%;opacity:0;animation:blast .45s ease-out both;animation-delay:calc(.38s + var(--ad,0s))}
+.disc.stonein{animation:stonein .9s both;animation-delay:var(--ad,0s)}
+@keyframes stonein{0%,42%{transform:scale(.15) rotate(-20deg);opacity:0}66%{transform:scale(1.12);opacity:1}100%{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.flaskfly,.blast.flaskburst,.disc.stonein{animation:none;opacity:0}.disc.stonein{opacity:1}}
 
 .hdr-right{display:flex;align-items:center;gap:10px}
 .exit{background:transparent;border:1px solid var(--line);border-radius:8px;padding:5px 10px;font-family:var(--fd);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);cursor:pointer}
@@ -377,10 +387,10 @@ details ul{padding-left:18px;margin:8px 0 0}
 <body>
 <div id="app"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script>window.CW_VERSION="20261012032537"</script>
-<script src="config.js?v=20261012032537"></script>
-<script src="game.js?v=20261012032537"></script>
-<script src="rt.js?v=20261012032537"></script>
-<script src="app.js?v=20261012032537"></script>
+<script>window.CW_VERSION="20261012033748"</script>
+<script src="config.js?v=20261012033748"></script>
+<script src="game.js?v=20261012033748"></script>
+<script src="rt.js?v=20261012033748"></script>
+<script src="app.js?v=20261012033748"></script>
 </body>
 </html>
