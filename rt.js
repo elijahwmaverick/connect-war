@@ -145,8 +145,8 @@
 
     let ev = { type: id }, note = "";
     const p = seat;
-    if (id === "block") { const r = C.topEmpty(g, c); g.grid[r][c] = 3; g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} placed a stone in ${L[c]}.`; }
-    if (id === "freeze") { g.frozen = g.frozen.filter(f => f.until > now); g.frozen.push({ col: c, player: opp(p), until: now + FREEZE_MS }); ev = { type: "freeze", c }; note = `Player ${p} froze column ${L[c]}.`; }
+    if (id === "block") { const r = C.topEmpty(g, c); g.grid[r][c] = 3; g.anc[r][c] = "o" + p; g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} placed a stone in ${L[c]}.`; }
+    if (id === "freeze") { g.frozen = g.frozen.filter(f => f.until > now); g.frozen.push({ col: c, player: opp(p), by: p, until: now + FREEZE_MS }); ev = { type: "freeze", c }; note = `Player ${p} froze column ${L[c]}.`; }
     if (id === "lift") { const t2 = C.topDisc(g, c); ev = { type: "lift", r: t2, c, v: g.grid[t2][c] }; g.grid[t2][c] = 0; g.anc[t2][c] = false; note = `Player ${p} lifted a disc from ${L[c]}.`; }
     if (id === "pop") { ev = { type: "pop", c, prev: C.clone(g) }; const f = C.floorRow(g); g.grid[f][c] = 0; g.anc[f][c] = false; C.compactCol(g, c); g.last = null; note = `Player ${p} popped column ${L[c]}.`; }
     if (id === "reinforce") { ev = C.reinforce(g, c, p); note = `Player ${p} reinforced column ${L[c]}.`; }
@@ -156,7 +156,7 @@
       [g.grid[a.r][a.c], g.grid[a.r2][a.c2]] = [g.grid[a.r2][a.c2], g.grid[a.r][a.c]];
       ev = { type: "swap", r: a.r, c: a.c, r2: a.r2, c2: a.c2 }; g.last = null; note = `Player ${p} swapped two discs.`;
     }
-    if (id === "grenade") { const r = C.topEmpty(g, c); C.placeGrenade(g, r, c, now); g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} dropped a grenade in ${L[c]}.`; }
+    if (id === "grenade") { const r = C.topEmpty(g, c); C.placeGrenade(g, r, c, now, p); g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} dropped a grenade in ${L[c]}.`; }
     if (id === "punch") {
       if (g.grid[a.r][c] === 4) g.bombs = (g.bombs || []).filter(b => b.id !== g.anc[a.r][c]);
       g.grid[a.r][c] = p; g.anc[a.r][c] = "punch";

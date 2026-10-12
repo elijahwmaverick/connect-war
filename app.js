@@ -6,6 +6,11 @@ const { MAXE, TURN_S, AB, opp } = CW;
 let ROWS = 7, COLS = 8, L = "ABCDEFGH";
 function syncDims(g) { const r = (g && g.rows) || 7, c = (g && g.cols) || 8; CW.setDims(r, c); ROWS = r; COLS = c; L = CW.L; }
 let playerCount = 2;
+// Player name (required before playing) and HTML escaping for anything other players typed.
+let myName = (store("cw_name") || "").slice(0, 16);
+const esc = t => String(t == null ? "" : t).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+const cleanName = t => String(t || "").replace(/\s+/g, " ").trim().slice(0, 16);
+let homeScreen = "home"; // home | name | host | browse
 const app = document.getElementById("app");
 
 function store(k, v) {
@@ -41,7 +46,7 @@ function openChannel(c, host) {
     .on("broadcast", { event: "closed" }, () => {
       if (!isHost) { leaveLocal(); err = "The host closed the game."; render(); }
     })
-    .on("broadcast", { event: "hello" }, ({ payload }) => { if (isHost) hostHello(payload.token); })
+    .on("broadcast", { event: "hello" }, ({ payload }) => { if (isHost) hostHello(payload.token, payload.name); })
     .on("broadcast", { event: "action" }, ({ payload }) => { if (isHost) hostAction(payload); })
     .on("presence", { event: "sync" }, () => {
       const was = peerOnline;
@@ -78,7 +83,7 @@ function sayHello() {
   let tries = 0;
   const knock = () => {
     if (V) { clearInterval(joinTimer); joinTimer = null; return; }
-    send("hello", { token });
+    send("hello", { token, name: myName });
     if (++tries === 3) { err = `Waiting for the host of game ${code} to come online…`; render(); }
   };
   knock();
@@ -156,6 +161,7 @@ function createLocal() {
   closeChannel();
   room = newRoom("LOCAL", timerOn, gameMode, playerCount);
   room.guest = "local"; if (room.n === 3) room.guest3 = "local3"; room.phase = "draft";
+  room.names = { 1: "Player 1", 2: "Player 2", 3: "Player 3" };
   isHost = true; isLocal = true; localSeat = 1; localHandoff = false; peerOnline = true; code = null;
   sel = []; V = null; lastSeq = -1;
   publish();
@@ -163,7 +169,7 @@ function createLocal() {
 
 function newRoom(c, timerOn, mode, n) {
   const m = mode === "tactics" ? "tactics" : "rt";
-  return { code: c, mode: m, n: m === "tactics" && n === 3 ? 3 : 2, guest: null, guest3: null, phase: "lobby", picks: { 1: null, 2: null, 3: null }, starter: 1, game: null,
+  return { code: c, names: { 1: myName || "Player 1" }, lobbyName: "", mode: m, n: m === "tactics" && n === 3 ? 3 : 2, guest: null, guest3: null, phase: "lobby", picks: { 1: null, 2: null, 3: null }, starter: 1, game: null,
     timerOn: !!timerOn, deadline: null, timerTurn: null, votes: { rematch: [], redraft: [] } };
 }
 function saveRoom() { if (room && !isLocal) store("cw_host_" + room.code, JSON.stringify(room)); }
@@ -177,7 +183,7 @@ function view(seat) {
   const n = roomN(), all = seatsOf().every(s => room.picks[s]);
   const both = n === 2 ? !!(room.picks[1] && room.picks[2]) : all;
   return {
-    n, joined: 1 + (room.guest ? 1 : 0) + (room.guest3 ? 1 : 0),
+    n, joined: 1 + (room.guest ? 1 : 0) + (room.guest3 ? 1 : 0), names: room.names || {}, lobbyName: room.lobbyName || "",
     allPicks: all ? room.picks : null,
     othersLocked: seatsOf().filter(s => s !== seat && room.picks[s]).length,
     code: room.code, matched: !!room.expectGuest, local: isLocal, mode: room.mode || "tactics", hostNow: Date.now(), seat, phase: room.phase, timerOn: room.timerOn,
@@ -287,7 +293,7 @@ function handle(seat, type, p) {
   return "Unknown action.";
 }
 
-function hostHello(t) {
+function hostHello(t, name) {
   if (!room) return;
   if (!room.guest && room.expectGuest && room.expectGuest !== t) { send("reject", { to: t, reason: "That game is reserved for a matched player." }); return; }
   if (!tokenSeat(t)) {
@@ -295,7 +301,10 @@ function hostHello(t) {
     else if (roomN() === 3 && !room.guest3) room.guest3 = t;
     else { send("reject", { to: t, reason: `That game already has ${roomN()} players.` }); return; }
   }
+  const st = tokenSeat(t);
+  if (st) { room.names = room.names || {}; room.names[st] = cleanName(name) || `Player ${st}`; }
   if (room.phase === "lobby" && allJoined()) room.phase = "draft";
+  lobbyAdvertise();
   computePeer();
   publish();
 }
@@ -327,14 +336,46 @@ function act(type, p, cb) {
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const randomCode = () => Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join("");
+/* ================= lobby directory ================= */
+// Open lobbies are advertised on the presence channel "cw-lobbies"; Find lobby lists them.
+let dir = null; // { ch, list, hosting }
+function dirOpen() {
+  if (!sb) return null;
+  if (dir) return dir;
+  const ch = sb.channel("cw-lobbies", { config: { presence: { key: token } } });
+  dir = { ch, list: [], ready: false, meta: null };
+  ch.on("presence", { event: "sync" }, () => {
+    if (!dir) return;
+    dir.list = Object.values(ch.presenceState()).flat().filter(l => l.code && l.open && l.token !== token)
+      .sort((a, b) => b.created - a.created);
+    if (!V && homeScreen === "browse") render();
+  }).subscribe(async status => {
+    if (status === "SUBSCRIBED" && dir) { dir.ready = true; if (dir.meta) await ch.track(dir.meta); if (!V && homeScreen === "browse") render(); }
+  });
+  return dir;
+}
+function dirClose() { if (dir) { sb.removeChannel(dir.ch); dir = null; } }
+// Host: publish (or withdraw) this room in the lobby list.
+function lobbyAdvertise() {
+  if (!sb || !room || isLocal || room.expectGuest) return;
+  const joined = 1 + (room.guest ? 1 : 0) + (room.guest3 ? 1 : 0);
+  const open = room.phase === "lobby" && joined < roomN();
+  if (!open) { if (dir && dir.meta) { dir.meta = null; dirClose(); } return; }
+  const d = dirOpen();
+  d.meta = { token, code: room.code, name: room.lobbyName || `${room.names[1]}'s Lobby`, host: room.names[1], mode: room.mode, n: roomN(), joined, open: true, created: room.created || (room.created = Date.now()) };
+  if (d.ready) d.ch.track(d.meta);
+}
+
 function createGame(fixedCode, opts = {}) {
   const c = fixedCode || randomCode();
   room = newRoom(c, opts.timerOn ?? timerOn, opts.mode || gameMode, opts.players || (opts.mode ? 2 : playerCount));
   if (opts.expectGuest) room.expectGuest = opts.expectGuest;
+  room.lobbyName = opts.lobbyName || "";
   store("cw_room", c); store("cw_role", "host");
   history.replaceState(null, "", "#" + c);
   openChannel(c, true);
   publish();
+  lobbyAdvertise();
 }
 function resumeHost(c) {
   try { room = JSON.parse(store("cw_host_" + c)); } catch (e) { room = null; }
@@ -356,7 +397,7 @@ function joinGame(c) {
   openChannel(c, false);
 }
 function leaveLocal() {
-  stopMatchmaking();
+  stopMatchmaking(); dirClose(); homeScreen = "home";
   closeChannel(); isLocal = false; localHandoff = false;
   if (isHost && room) store("cw_host_" + room.code, null);
   clearTimer(); room = null; isHost = false; code = null; V = null;
@@ -487,7 +528,10 @@ const menuModal = () => `<div class="modal" role="dialog" aria-modal="true" aria
   <p class="muted">${V && V.phase === "play" && V.game && !V.game.over ? (isLocal ? "The match will end." : isHost ? "You're the host, so the match ends for both players." : "You'll leave the match. You can rejoin with the code.") : "You'll go back to the main menu."}</p>
   <button class="primary" data-act="menu-yes">Leave to main menu</button>
   <button class="ghost" data-act="menu-no">Stay</button></div></div>`;
-const you = p => (V && V.local ? `Player ${p}` : V && p === V.seat ? "You" : V && V.n === 3 ? `Player ${p}` : "Opponent");
+const nameOf = p => (V && V.names && V.names[p]) || (V && V.n === 3 ? `Player ${p}` : "Opponent");
+const you = p => (V && V.local ? `Player ${p}` : V && p === V.seat ? "You" : esc(nameOf(p)));
+// Swap "Player N" in engine notes for "You" / that player's name.
+const named = t => (V && V.local ? t : String(t || "").replace(/Player (\d)/g, (m, d) => you(+d)));
 const picksOf = p => (V.allPicks && V.allPicks[p]) || (p === V.seat ? V.myPicks : V.oppPicks);
 const turnOrder = () => { const n = V.n || 2, out = []; for (let i = 0, p = V.seat; i < n; i++, p = (p % n) + 1) out.push(p); return out; };
 const localName = text => text; // local mode keeps "Player 1/2" wording
@@ -538,12 +582,9 @@ function renderSearching() {
 }
 
 const three = () => gameMode === "tactics" && playerCount === 3;
-function renderHome() {
-  const waiting = code && !isHost;
-  app.innerHTML = `${header()}
-  <section class="setup">
-    <h2>New game</h2>
-    <div class="modes">
+const modeLabel = m => (m === "rt" ? "Connect War: Full Auto" : "Connect War");
+function modeOptions() {
+  return `<div class="modes">
       <button class="mode ${gameMode === "tactics" ? "on" : ""}" data-mode="tactics" aria-pressed="${gameMode === "tactics"}"><span class="cn">Connect War</span><span class="cd">Turn based with energy. One four wins.</span></button>
       <button class="mode ${gameMode === "rt" ? "on" : ""}" data-mode="rt" aria-pressed="${gameMode === "rt"}"><span class="cn">Connect War: Full Auto</span><span class="cd">Real time. No turns: drop charges and ability cooldowns. Scored fours turn to stone. First to 5 in 5 minutes.</span></button>
     </div>
@@ -553,19 +594,73 @@ function renderHome() {
       <button class="${playerCount === 3 ? "on" : ""}" data-players="3" aria-pressed="${playerCount === 3}">3</button>
     </div>
     <label class="tog"><input type="checkbox" id="timerOn" ${timerOn ? "checked" : ""}> 20-second turn clock</label>` : ""}
-    ${three() ? `<p class="muted small">3 players: bigger 10×8 board, turns go 1 → 2 → 3. Freeze and Pop hit both opponents. Matchmaking is 2-player only.</p>` : ""}
+    ${three() ? `<p class="muted small">3 players: bigger 10×8 board, turns go 1 → 2 → 3. Freeze and Pop hit both opponents. Find match is 2-player only.</p>` : ""}`;
+}
+
+function renderName() {
+  app.innerHTML = `${header()}
+  <section class="setup">
+    <h2>${myName ? "Change your name" : "Choose your name"}</h2>
+    <p class="muted">Other players see this in lobbies and during matches.</p>
+    <form class="field" id="nameForm"><input id="nameIn" maxlength="16" placeholder="Your name" autocomplete="nickname" value="${esc(myName)}" aria-label="Your name" style="letter-spacing:.04em;text-transform:none;font-size:18px;text-align:left"><button class="primary" type="submit">Save</button></form>
+    ${myName ? `<button class="ghost" data-act="home">Back</button>` : ""}
+    <p class="err">${err}</p>
+  </section>`;
+  const i = document.getElementById("nameIn"); if (i) i.focus();
+}
+
+function renderHostForm() {
+  app.innerHTML = `${header()}
+  <section class="setup">
+    <div class="eyebrow">Host a lobby</div>
+    <h2>${esc(modeLabel(gameMode))}${three() ? " · 3 players" : ""}</h2>
+    <form class="setup" id="hostForm" style="gap:10px">
+      <label class="muted small" for="lobbyIn">Lobby name</label>
+      <input id="lobbyIn" class="textin" maxlength="28" placeholder="${esc(myName)}'s Lobby" autocomplete="off">
+      <button class="primary" type="submit">Open lobby</button>
+    </form>
+    <button class="ghost" data-act="home">Back</button>
+  </section>`;
+}
+
+function renderBrowse() {
+  const d = dir, list = d ? d.list : [];
+  app.innerHTML = `${header()}
+  <section class="setup">
+    <div class="eyebrow">Find lobby</div>
+    <h2>Open lobbies</h2>
+    ${!d || !d.ready ? `<p class="muted">Loading lobbies…</p>` : list.length ? `<ul class="lobbies">${list.map(l => `
+      <li><button class="lobby" data-joinlobby="${esc(l.code)}">
+        <span class="lb-name">${esc(l.name)}</span>
+        <span class="lb-meta">${esc(modeLabel(l.mode))} · hosted by ${esc(l.host)}</span>
+        <span class="lb-seats">${l.joined}/${l.n}</span></button></li>`).join("")}</ul>`
+      : `<p class="muted">No open lobbies right now. Host one, or try Find match.</p>`}
+    <button class="ghost" data-act="home">Back</button>
+    <p class="err">${err}</p>
+  </section>`;
+}
+
+function renderHome() {
+  if (homeScreen === "name" || !myName) return renderName();
+  if (homeScreen === "host") return renderHostForm();
+  if (homeScreen === "browse") return renderBrowse();
+  const waiting = code && !isHost;
+  app.innerHTML = `${header()}
+  <section class="setup">
+    <div class="who"><span>Playing as <b>${esc(myName)}</b></span><button class="linkbtn" data-act="rename">Change</button></div>
+    <h2>New game</h2>
+    ${modeOptions()}
     <button class="primary" data-act="matchmake" ${sb && !three() ? "" : "disabled"}>Find match</button>
     <div class="row2">
-      <button class="ghost strong" data-act="create" ${sb ? "" : "disabled"}>Play a friend</button>
-      <button class="ghost strong" data-act="local">Play local</button>
+      <button class="ghost strong" data-act="hostform" ${sb ? "" : "disabled"}>Host lobby</button>
+      <button class="ghost strong" data-act="browse" ${sb ? "" : "disabled"}>Find lobby</button>
     </div>
-    <p class="muted small">Find match: play the next person searching. Play a friend: send them a code. Local: two players on this phone${gameMode === "rt" ? ", one at each end" : ", passing it between turns"}.</p>
+    <button class="ghost strong" data-act="local">Play local</button>
+    <p class="muted small">Find match: play the next person searching. Host or find a lobby to play friends. Local: everyone on this phone${gameMode === "rt" ? ", one at each end" : ", passing it between turns"}.</p>
     ${sb ? "" : `<p class="err">Online play is unavailable: the game server didn't load. Local play still works.</p>`}
-    <div class="divider">JOIN A GAME</div>
-    <form class="field" id="joinForm" ${sb ? "" : "hidden"}><input id="code" maxlength="4" placeholder="CODE" autocomplete="off" aria-label="Game code" value="${waiting ? code : ""}"><button class="primary" type="submit">Join</button></form>
     <p class="err">${err}</p>
     ${waiting ? `<button class="ghost" data-act="leave">Cancel</button>` : ""}
-    ${!waiting && store("cw_room") && store("cw_room") !== "LOCAL" ? `<button class="ghost" data-act="rejoin">Rejoin game ${store("cw_room")}</button>` : ""}
+    ${!waiting && store("cw_room") && store("cw_room") !== "LOCAL" ? `<button class="ghost" data-act="rejoin">Rejoin last game</button>` : ""}
     <button class="linkbtn" data-act="reset">Stuck? Reset saved games</button>
   </section>`;
 }
@@ -576,16 +671,15 @@ function renderLobby() {
       <div class="radar" aria-hidden="true"><i></i><i></i><i></i></div><h2>Opponent found</h2><p class="muted">Connecting…</p><p class="err">${err}</p></section>`;
     return;
   }
-  const url = location.origin + location.pathname + "#" + V.code;
+  const n = V.n || 2, names = V.names || {};
+  const lname = V.lobbyName || `${names[1] || "Host"}'s Lobby`;
   app.innerHTML = `${header()}
   <section class="setup">
-    <div class="eyebrow">${modeName()} · Game created</div>
-    <h2>${(V.n || 2) === 3 ? "Send this to both opponents" : "Send this to your opponent"}</h2>
-    <div class="code">${V.code}</div>
-    <div class="link" id="link">${url}</div>
-    <button class="ghost" data-act="copy">Copy link</button>
-    <p class="muted">${(V.n || 2) === 3 ? `${V.joined} of 3 players joined. Waiting for ${3 - V.joined} more…` : "Waiting for Player 2 to join…"} Keep this page open: your device runs the match.</p>
-    <button class="ghost" data-act="leave">Cancel</button>
+    <div class="eyebrow">${modeName()}${n === 3 ? " · 3 players" : ""} · Lobby</div>
+    <h2>${esc(lname)}</h2>
+    <ul class="seats">${[...Array(n).keys()].map(i => i + 1).map(p => `<li class="c${p}"><span class="dot d${p === 3 ? 6 : p}"></span>${names[p] ? esc(names[p]) + (p === V.seat ? " (you)" : "") : `<span class="muted">Waiting for player…</span>`}</li>`).join("")}</ul>
+    <p class="muted">${V.seat === 1 ? "Your lobby is listed under Find lobby. Keep this page open: your device runs the match." : "Waiting for the lobby to fill…"}</p>
+    <button class="ghost" data-act="leave">${V.seat === 1 ? "Close lobby" : "Leave lobby"}</button>
     <p class="err">${err}</p>
   </section>`;
 }
@@ -672,11 +766,11 @@ function statusText() {
     if (g.over && V.local) return `Player ${g.result} wins ${g.score[g.result]}–${g.score[opp(g.result)]}.`;
     if (g.over) return g.result === V.seat ? `You win ${g.score[V.seat]}–${g.score[opp(V.seat)]}.` : `You lose ${g.score[V.seat]}–${g.score[opp(V.seat)]}.`;
     if (mode) return (mode === "freeze" ? "Freeze: tap a column to lock it for your opponent for 5 seconds." : PROMPT[mode]());
-    const nt = V.local ? g.note : g.note ? g.note.replace(new RegExp(`Player ${V.seat}`, "g"), "You").replace(new RegExp(`Player ${opp(V.seat)}`, "g"), "Opponent") : "";
+    const nt = named(g.note);
     return (g.sudden ? "<b>Sudden death</b>: next score wins. " : "") + (nt || "Go! Drop discs as fast as your cooldowns allow.");
   }
   if (g.over && V.local) return g.result ? `Player ${g.result} connects four.` : "Board full. Draw.";
-  if (g.over) return g.result ? (g.result === V.seat ? "You connect four." : V.n === 3 ? `Player ${g.result} connects four.` : "Your opponent connects four.") : "Board full. Draw.";
+  if (g.over) return g.result ? (g.result === V.seat ? "You connect four." : `${you(g.result)} connects four.`) : "Board full. Draw.";
   if (mode) return PROMPT[mode]();
   if (V.local) {
     const who = `<b class="c${g.cur}">Player ${g.cur}</b>`;
@@ -685,19 +779,19 @@ function statusText() {
     if (g.abilityUsed && g.dropsMade === 0 && !g.dd) return nl + who + ": now drop a disc.";
     return nl + who + ": drop a disc, or use an ability first.";
   }
-  const note = g.note ? (V.n === 3 ? g.note.replace(new RegExp(`Player ${V.seat}\\b`, "g"), "You") : g.note.replace(new RegExp(`Player ${V.seat}`, "g"), "You").replace(new RegExp(`Player ${opp(V.seat)}`, "g"), "Opponent")) + " " : "";
+  const note = g.note ? named(g.note) + " " : "";
   if (g.cur === V.seat) {
     if (g.dd && g.dropsMade === 1) return note + "Place your second disc in a different column. It can't complete a 4.";
     if (g.abilityUsed && g.dropsMade === 0 && !g.dd) return note + "<b>Your turn</b>: now drop a disc.";
     return note + "<b>Your turn</b>: drop a disc, or use an ability first.";
   }
-  return note + (V.n === 3 ? `<b class="c${g.cur}">Player ${g.cur}</b>'s turn.` : "Opponent's turn.");
+  return note + `<b class="c${g.cur}">${you(g.cur)}</b>'s turn.`;
 }
 
 function overHtml() {
   const g = V.game, other = opp(V.seat);
   const r = V.votes.rematch, d = V.votes.redraft;
-  const title = g.result ? (V.local ? `Player ${g.result} wins` : g.result === V.seat ? "You win" : "You lose") : "Draw";
+  const title = g.result ? (V.local ? `Player ${g.result} wins` : g.result === V.seat ? "You win" : (V.n || 2) === 3 ? `${you(g.result)} wins` : "You lose") : "Draw";
   const n = V.n || 2;
   const rOthers = r.filter(s => s !== V.seat).length, dOthers = d.filter(s => s !== V.seat).length;
   const sub = n === 3 ? (rOthers ? `${rOthers} of ${n - 1} others want a rematch.` : dOthers ? `${dOthers} of ${n - 1} others want new loadouts.` : "")
@@ -754,7 +848,8 @@ function renderPlay() {
       if (mt === "col" && CW.validCol(g, mode, c)) cls += " tgt";
       else if (!mode && !(rt && V.local) && canDropCol(c)) cls += " can";
     }
-    if (!g.over && (rt ? g.frozen.some(f => f.col === c && f.until > now) : g.frozen && g.frozen.col === c)) cls += " frz";
+    const fzHere = !g.over && (rt ? g.frozen.find(f => f.col === c && f.until > now) : g.frozen && g.frozen.col === c ? g.frozen : null);
+    if (fzHere) cls += " frz" + (fzHere.by ? " frzby" + fzHere.by : "");
     let cells = "";
     for (let r = 0; r < ROWS; r++) {
       const v = shown.grid[r][c]; let cc = "cell";
@@ -785,7 +880,7 @@ function renderPlay() {
         if (pufx) {
           const fallN = Math.abs(pufx.r - pufx.from);
           if (fallN) { const [k, st] = motion(fallN); extra += k; style += st + pufx.ad; } else { extra += " punchin"; style += pufx.ad; }
-          disc0 = `<div class="shock" style="${pufx.ad}"></div>`;
+          disc0 = `<div class="shock own${pufx.by || ""}" style="${pufx.ad}"></div>`;
         }
         const afx = fxFind("anchor", f => at(f.r, f.c));
         if (afx) { extra += " anc-in"; style += afx.ad; }
@@ -796,13 +891,14 @@ function renderPlay() {
         }
         if (pend && pend.has(r + "," + c) && !(flip && flip.phase === 1)) extra += " pend";
         const lst = g.last && g.last.r === r && g.last.c === c && !g.over;
-        if (v === 4) { const b = (g0.bombs || []).find(x => x.id === shown.anc[r][c]); if (b && b.until - now < 900) extra += " fuse-hot"; }
-        disc = `<div class="disc d${v} ${shown.anc[r][c] && v !== 4 ? "anc" : ""}${extra} ${lst ? "last" : ""}" ${style ? `style="${style}"` : ""}></div>` + disc0;
+        if (v === 4) { const b = (g0.bombs || []).find(x => x.id === shown.anc[r][c]); if (b && b.until - now < 900) extra += " fuse-hot"; if (b && b.by) extra += " own" + b.by; }
+        if (v === 3 && typeof shown.anc[r][c] === "string" && shown.anc[r][c][0] === "o") extra += " own" + shown.anc[r][c].slice(1);
+        disc = `<div class="disc d${v} ${shown.anc[r][c] === true ? "anc" : ""}${extra} ${lst ? "last" : ""}" ${style ? `style="${style}"` : ""}></div>` + disc0;
       } else {
         const lfx = fxFind("lift", f => at(f.r, f.c));
         if (lfx) disc = `<div class="disc d${lfx.v} lift-out${gup ? " down" : ""}" style="${lfx.ad}"></div>`;
       }
-      if (flip && flip.phase === 1 && flip.ev && flip.ev.type === "boom" && at(flip.ev.r, flip.ev.c)) disc += `<div class="blast"></div>`;
+      if (flip && flip.phase === 1 && flip.ev && flip.ev.type === "boom" && at(flip.ev.r, flip.ev.c)) disc += `<div class="blast own${flip.ev.by || ""}"></div>`;
       const shf = fxFind("drop", f => f.broke != null && at(f.broke, f.c));
       if (shf) disc += `<div class="disc d5 shatter" style="${shf.ad}"></div>`;
       const wd = wi !== undefined ? `style="--wd:${(0.3 + wi * 0.15).toFixed(2)}s"` : "";
@@ -894,6 +990,18 @@ function sendAct(type, p) {
 }
 
 app.addEventListener("submit", e => {
+  if (e.target.id === "nameForm") {
+    e.preventDefault();
+    const n = cleanName(document.getElementById("nameIn").value);
+    if (!n) { err = "Enter a name."; return render(); }
+    myName = n; store("cw_name", n); err = ""; homeScreen = "home"; return render();
+  }
+  if (e.target.id === "hostForm") {
+    e.preventDefault();
+    const ln = String(document.getElementById("lobbyIn").value || "").replace(/\s+/g, " ").trim().slice(0, 28);
+    homeScreen = "home"; err = "";
+    return createGame(null, { lobbyName: ln || `${myName}'s Lobby` });
+  }
   if (e.target.id !== "joinForm") return;
   e.preventDefault();
   const c = document.getElementById("code").value.trim().toUpperCase();
@@ -905,6 +1013,8 @@ app.addEventListener("change", e => { if (e.target.id === "timerOn") timerOn = e
 app.addEventListener("click", e => {
   const pc = e.target.closest("[data-players]");
   if (pc) { playerCount = +pc.dataset.players; return render(); }
+  const lb = e.target.closest("[data-joinlobby]");
+  if (lb) { const c = lb.dataset.joinlobby; dirClose(); homeScreen = "home"; err = ""; return joinGame(c); }
   const modeBtn = e.target.closest("[data-mode]");
   if (modeBtn) { gameMode = modeBtn.dataset.mode; return render(); }
   const pick = e.target.closest("[data-pick]");
@@ -919,6 +1029,10 @@ app.addEventListener("click", e => {
     if (a === "create") { err = ""; return createGame(); }
     if (a === "local") { err = ""; return createLocal(); }
     if (a === "matchmake") { return startMatchmaking(); }
+    if (a === "rename") { homeScreen = "name"; err = ""; return render(); }
+    if (a === "home") { homeScreen = "home"; err = ""; dirClose(); return render(); }
+    if (a === "hostform") { homeScreen = "host"; err = ""; return render(); }
+    if (a === "browse") { homeScreen = "browse"; err = ""; dirOpen(); return render(); }
     if (a === "mm-cancel") { stopMatchmaking(); return render(); }
     if (a === "menu") { confirmMenu = true; return app.insertAdjacentHTML("beforeend", menuModal()); }
     if (a === "menu-no") { confirmMenu = false; const m = app.querySelector(".modal"); if (m) m.remove(); return; }

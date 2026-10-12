@@ -297,6 +297,29 @@ details ul{padding-left:18px;margin:8px 0 0}
 .ability-banner .ab-name{font-family:var(--fd);font-weight:700;font-size:34px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg);text-shadow:0 0 18px var(--pc)}
 @keyframes bannersweep{0%{transform:translateX(-100%) skewX(-12deg);opacity:0}16%{transform:translateX(0) skewX(0);opacity:1}78%{transform:translateX(0);opacity:1}100%{transform:translateX(100%) skewX(12deg);opacity:0}}
 @media (prefers-reduced-motion:reduce){.ability-banner{animation:fadeout 1.45s forwards}@keyframes fadeout{80%{opacity:1}100%{opacity:0}}}
+
+/* Things a player placed carry that player's color */
+.own1{--oc:var(--p1);--ocd:var(--p1d);--ocl:var(--p1l)}.own2{--oc:var(--p2);--ocd:var(--p2d);--ocl:var(--p2l)}.own3{--oc:var(--p3);--ocd:var(--p3d);--ocl:var(--p3l)}
+.d4.own1,.d4.own2,.d4.own3{background:linear-gradient(0deg,transparent 42%,var(--oc) 42% 58%,transparent 58%),radial-gradient(circle at 35% 30%,#5d6470,#2a2f37 55%,#15181d);box-shadow:inset 0 0 0 3px var(--oc),inset 0 0 0 5px #0c0e12,0 0 10px -2px var(--oc)}
+.d4.own1::before,.d4.own2::before,.d4.own3::before{z-index:1;background:#fff;box-shadow:0 0 0 2px #0c0e12,0 0 8px 3px var(--oc)}
+.d3.own1,.d3.own2,.d3.own3{box-shadow:inset 0 0 0 3px var(--oc),inset 0 -3px 0 rgba(0,0,0,.18)}
+.col.frz.frzby1{--fc:240,104,58}.col.frz.frzby2{--fc:67,180,204}.col.frz.frzby3{--fc:169,124,242}
+.col.frz.frzby1::after,.col.frz.frzby2::after,.col.frz.frzby3::after{background:repeating-linear-gradient(135deg,rgba(var(--fc),.28) 0 6px,rgba(var(--fc),.08) 6px 12px);box-shadow:0 0 0 2px rgb(var(--fc)) inset}
+.shock.own1,.shock.own2,.shock.own3{border-color:var(--oc)}
+.blast.own1,.blast.own2,.blast.own3{background:radial-gradient(circle,#fff 0 12%,var(--ocl) 24%,var(--oc) 42%,transparent 68%)}
+/* Names, lobby list, seats */
+.who{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted)}
+.who b{color:var(--fg)}
+.textin{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:16px;width:100%}
+.lobbies{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.lobby{width:100%;display:grid;grid-template-columns:1fr auto;gap:2px 10px;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;cursor:pointer}
+.lobby:hover{border-color:var(--gold)}
+.lb-name{font-family:var(--fd);font-weight:700;font-size:16px;overflow-wrap:anywhere}
+.lb-meta{grid-column:1;font-size:13px;color:var(--muted)}
+.lb-seats{grid-column:2;grid-row:1/3;align-self:center;font-family:var(--fd);font-size:18px;font-variant-numeric:tabular-nums}
+.seats{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.seats li{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-family:var(--fd);font-weight:600;overflow-wrap:anywhere}
+.seats .dot{position:relative;width:18px;height:18px;flex:none;border-radius:50%}
 </style>
 </head>
 <body>

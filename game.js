@@ -225,8 +225,8 @@
     g.energy[p] -= AB[id].cost; g.abilityUsed = true;
     const c = a.c;
     let ev = { type: id }, note = "";
-    if (id === "block") { const r = topEmpty(g, c); g.grid[r][c] = 3; g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} placed a stone in ${L[c]}.`; }
-    if (id === "freeze") { g.frozen = { col: c, players: others(g, p) }; ev = { type: "freeze", c }; note = `Player ${p} froze column ${L[c]}.`; }
+    if (id === "block") { const r = topEmpty(g, c); g.grid[r][c] = 3; g.anc[r][c] = "o" + p; g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} placed a stone in ${L[c]}.`; }
+    if (id === "freeze") { g.frozen = { col: c, players: others(g, p), by: p }; ev = { type: "freeze", c }; note = `Player ${p} froze column ${L[c]}.`; }
     if (id === "lift") { const t2 = topDisc(g, c); ev = { type: "lift", r: t2, c, v: g.grid[t2][c] }; g.grid[t2][c] = 0; g.anc[t2][c] = false; note = `Player ${p} lifted a disc from ${L[c]}.`; }
     if (id === "pop") { ev = { type: "pop", c, prev: clone(g) }; const f = floorRow(g); g.grid[f][c] = 0; g.anc[f][c] = false; compactCol(g, c); g.last = null; note = `Player ${p} popped column ${L[c]}.`; }
     if (id === "reinforce") { ev = reinforce(g, c, p); note = `Player ${p} reinforced column ${L[c]}.`; }
@@ -237,7 +237,7 @@
       ev = { type: "swap", r: a.r, c: a.c, r2: a.r2, c2: a.c2 };
       g.last = null; note = `Player ${p} swapped two discs.`;
     }
-    if (id === "grenade") { const r = topEmpty(g, c); placeGrenade(g, r, c, Date.now()); g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} dropped a grenade in ${L[c]}.`; }
+    if (id === "grenade") { const r = topEmpty(g, c); placeGrenade(g, r, c, Date.now(), p); g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} dropped a grenade in ${L[c]}.`; }
     if (id === "gravity") { ev = { type: "gravity", prev: clone(g) }; flipGravity(g); note = `Player ${p} flipped gravity. Discs now fall ${up(g) ? "up" : "down"}.`; }
     if (id === "double") { g.dd = true; g.dropsLeft = 2; note = `Player ${p} used Double Drop.`; }
     ev.ability = id; ev.by = p;
@@ -249,15 +249,16 @@
 
   // Grenades sit on the board as value 4; their id rides in the anc slot so it moves with the disc.
   const FUSE_MS = 2000;
-  function placeGrenade(g, r, c, now) {
+  function placeGrenade(g, r, c, now, by) {
     g.bombSeq = (g.bombSeq || 0) + 1;
     g.grid[r][c] = 4; g.anc[r][c] = g.bombSeq;
-    (g.bombs = g.bombs || []).push({ id: g.bombSeq, until: now + FUSE_MS });
+    (g.bombs = g.bombs || []).push({ id: g.bombSeq, until: now + FUSE_MS, by });
   }
   // Explode one grenade: destroy it and its four orthogonal neighbours, then let the board settle.
   function detonate(g, id) {
     let at = null;
     for (let r = 0; r < ROWS && !at; r++) for (let c = 0; c < COLS; c++) if (g.grid[r][c] === 4 && g.anc[r][c] === id) { at = [r, c]; break; }
+    const bomb = (g.bombs || []).find(b => b.id === id);
     g.bombs = (g.bombs || []).filter(b => b.id !== id);
     if (!at) return null;
     const [r, c] = at, prev = clone(g), cells = [r + "," + c];
@@ -268,7 +269,7 @@
     for (const k of cells) { const [a, b] = k.split(",").map(Number); g.grid[a][b] = 0; g.anc[a][b] = false; }
     for (let cc = 0; cc < COLS; cc++) compactCol(g, cc);
     g.last = null;
-    return { type: "boom", r, c, prev, clears: [{ p: 0, cells }] };
+    return { type: "boom", r, c, prev, clears: [{ p: 0, cells }], by: bomb && bomb.by };
   }
   // Tactics: called by the host's ticker.
   function tickBombs(g, now) {
