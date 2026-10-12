@@ -480,8 +480,10 @@ function onView(v) {
       }
       if (lastSeq !== -1 && g.ev) {
         const t = g.ev.type;
-        if (t === "flip" || t === "pop" || t === "gravity") flip = { type: t, c: g.ev.c, prev: g.ev.prev, phase: 1 };
-        else if (t === "rotate" || t === "shift" || t === "insert") flip = { type: t, dir: g.ev.dir || g.ev.side, r: g.ev.r, ev_r: g.ev.r, ev_c: g.ev.c, prev: g.ev.prev, mid: g.ev.mid, settle: settleMap(g.ev.mid, g), phase: 1 };
+        // Discs that this move turns to stone still have to travel with everything else first.
+        const pend = new Set(g.ev.scores ? g.ev.scores.flatMap(sc => sc.cells) : []);
+        if (t === "flip" || t === "pop" || t === "gravity") flip = { type: t, c: g.ev.c, prev: g.ev.prev, phase: 1, settle: t === "gravity" && g.ev.prev ? settleMap(g.ev.prev, g, pend) : null };
+        else if (t === "rotate" || t === "shift" || t === "insert") flip = { type: t, dir: g.ev.dir || g.ev.side, r: g.ev.r, ev_r: g.ev.r, ev_c: g.ev.c, prev: g.ev.prev, mid: g.ev.mid, settle: settleMap(g.ev.mid, g, pend), phase: 1 };
         else if (g.ev.clears && g.ev.prev) flip = { type: "clear", prev: g.ev.prev, clears: g.ev.clears, phase: 1, ev: g.ev };
         else fx.push({ ...g.ev, type: t === "block" ? "drop" : t, start: fxNow() });
       }
@@ -896,15 +898,16 @@ function choiceHtml(g) {
   return `<div class="choice"><button class="primary" data-dir="left" ${dis("left")}>${lab[0]}</button><button class="primary" data-dir="right" ${dis("right")}>${lab[1]}</button></div>`;
 }
 // How far each disc falls between two boards (column by column, movable pieces keep their order).
-function settleMap(from, to) {
+function settleMap(from, to, pend) {
   const out = {}, R = to.grid.length, C = to.grid[0].length, upG = to.gdir === -1;
+  pend = pend || new Set();
   for (let c = 0; c < C; c++) {
     const a = [], b = [];
     for (let i = 0; i < R; i++) {
       const r = upG ? i : R - 1 - i; // floor side first
       const va = from.grid[r][c], vb = to.grid[r][c];
       if (va && va !== 5) a.push(r);
-      if (vb && vb !== 5) b.push(r);
+      if (vb && (vb !== 5 || pend.has(r + "," + c))) b.push(r);
     }
     b.forEach((r, i) => { if (a[i] !== undefined && a[i] !== r) out[r + "," + c] = Math.abs(a[i] - r); });
   }
@@ -968,11 +971,12 @@ function renderPlay() {
           const fromC = flip.dir === "left" ? -1 : COLS;
           extra += " slide"; style += `--sx:calc(${fromC - c} * (116.3% + 7px));--sy:0px;`;
         }
+        else if (flip && flip.phase === 2 && flip.type === "gravity" && flip.settle) n = flip.settle[r + "," + c] || 0;
         else if (flip && flip.phase === 2 && (flip.type === "gravity" || (flip.type !== "clear" && flip.c === c))) n = flip.type === "pop" ? 1 : ROWS - CW.count(g, c);
         if (flip && flip.phase === 2 && flip.type === "clear") n = clearedFall(flip, r, c, gup);
         if (flip && flip.phase === 1 && flip.type === "clear" && flip.ev && flip.ev.type === "drop" && at(flip.ev.r, flip.ev.c)) n = gup ? ROWS - r : r + 1;
         if (flip && flip.phase === 1 && flip.type === "clear" && cleared.has(r + "," + c)) { extra += flip.ev && flip.ev.type === "boom" ? " boomed" : " scored"; style += `--wd:${(0.25 + cleared.get(r + "," + c) * 0.06).toFixed(2)}s;`; }
-        if (v === 5 && !(dfx && vShowPending(r + "," + c))) n = 0; // fixed stones never move (a just-dropped disc that is about to petrify still falls)
+        if (v === 5 && !vShowPending(r + "," + c)) n = 0; // fixed stones never move (a just-dropped disc that is about to petrify still falls)
         if (n) { const [k, st] = motion(n); extra += k; style += st; }
         const popFloor = (flip && flip.prev && flip.prev.gdir === -1) || (!flip && gup) ? 0 : ROWS - 1;
         if (flip && flip.phase === 1 && flip.type === "pop" && flip.c === c && r === popFloor) extra += " burst";
