@@ -358,15 +358,24 @@ details ul{padding-left:18px;margin:8px 0 0}
 .cell.edgeglow{box-shadow:0 0 0 2px var(--gold),0 0 12px 3px rgba(242,193,78,.7);animation:edgeglow .9s ease-in-out infinite alternate;cursor:pointer}
 @keyframes edgeglow{to{box-shadow:0 0 0 3px var(--gold),0 0 18px 6px rgba(242,193,78,.9)}}
 @media (prefers-reduced-motion:reduce){.cell.edgeglow{animation:none}}
+
+/* Fixed square frame for games with Rotate: the board turns inside it without resizing the page */
+.board-wrap.square{aspect-ratio:1/1;display:flex;align-items:center;justify-content:center}
+.board-wrap.square .board{flex:none}
+
+.board-wrap.square .board.rot-right{animation-name:rotRsq}
+.board-wrap.square .board.rot-left{animation-name:rotLsq}
+@keyframes rotRsq{to{transform:rotate(90deg)}}
+@keyframes rotLsq{to{transform:rotate(-90deg)}}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script>window.CW_VERSION="20261012022250"</script>
-<script src="config.js?v=20261012022250"></script>
-<script src="game.js?v=20261012022250"></script>
-<script src="rt.js?v=20261012022250"></script>
-<script src="app.js?v=20261012022250"></script>
+<script>window.CW_VERSION="20261012022939"</script>
+<script src="config.js?v=20261012022939"></script>
+<script src="game.js?v=20261012022939"></script>
+<script src="rt.js?v=20261012022939"></script>
+<script src="app.js?v=20261012022939"></script>
 </body>
 </html>

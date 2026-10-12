@@ -1019,7 +1019,12 @@ function renderPlay() {
   }
   const dd = fxFind("double");
   // Board class + inline style (column count, and a resumed Double Drop flash).
-  const ddFlash = `${dd ? "dd-flash" : ""}" style="grid-template-columns:repeat(${COLS},1fr);${dd ? dd.ad : ""}`;
+  // If anyone can Rotate, the board lives in a fixed square frame sized for its longer side, so turning
+  // 8×7 into 7×8 keeps the same cell size and the page never resizes.
+  const rotGame = [V.myPicks, V.oppPicks, ...(V.allPicks ? Object.values(V.allPicks) : [])].some(pk => pk && pk.includes("rotate"));
+  const M = Math.max(ROWS, COLS);
+  const fit = rotGame ? `width:calc(${COLS} / ${M} * 100%);margin-inline:auto;` : "";
+  const ddFlash = `${dd ? "dd-flash" : ""}" style="grid-template-columns:repeat(${COLS},1fr);${fit}${dd ? dd.ad : ""}`;
   const mine = V.myPicks || [];
   const trayRT = () => `<div class="dropbar" data-cd="drop"><i></i><span class="cdt">${dropText(g, V.seat, now)}</span></div>
   <div class="tray">${mine.map(id => {
@@ -1045,8 +1050,8 @@ function renderPlay() {
   ${dc}
   <div class="players" style="grid-template-columns:repeat(${V.n || 2},1fr)">${turnOrder().map(panel).join("")}</div>
   <p class="status" aria-live="polite">${statusText()}</p>
-  <div class="board-wrap"><div class="board ${!rt && showWin && g.result ? "won" : ""} ${gravCls()} ${flip && flip.phase === 1 && flip.type === "rotate" ? "rot-" + flip.dir : ""} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${myTurn ? dirOverlay(g) : ""}${g.over && showOver ? overHtml() : ""}</div>${bannerHtml()}
-  <div class="letters" style="grid-template-columns:repeat(${COLS},1fr)">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
+  <div class="board-wrap ${rotGame ? "square" : ""}"><div class="board ${!rt && showWin && g.result ? "won" : ""} ${gravCls()} ${flip && flip.phase === 1 && flip.type === "rotate" ? "rot-" + flip.dir : ""} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${myTurn ? dirOverlay(g) : ""}${g.over && showOver ? overHtml() : ""}</div>${bannerHtml()}
+  <div class="letters" style="grid-template-columns:repeat(${COLS},1fr);${fit}">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
   ${g.gdir === -1 ? `<div class="gravtag">Gravity is up: discs rise from the bottom${g.gravRevert ? ` · flips back at the start of ${g.gravRevert.by === V.seat ? "your" : you(g.gravRevert.by) + "'s"} ${["", "next", "2nd", "3rd"][g.gravRevert.left] || ""} turn` : ""}</div>` : ""}
   ${myTurn ? choiceHtml(g) : ""}
   ${tray}
