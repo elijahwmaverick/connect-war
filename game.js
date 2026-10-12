@@ -435,6 +435,7 @@
     let r2 = r; for (let rr = 0; rr < ROWS; rr++) if (g.anc[rr][c] === "ins") { r2 = rr; g.anc[rr][c] = false; }
     g.last = { r: r2, c };
     if (path.knock) compactCol(g, path.knock.to);
+    if (path.broke !== null && path.broke !== c) compactCol(g, path.broke); // pieces resting on the shattered stone fall
     return { type: "insert", r, c, side, r2, prev, mid, broke: path.broke, knock: path.knock };
   }
   // Slide every movable piece in row r one step; the end piece wraps around. Fixed stones stay put.
