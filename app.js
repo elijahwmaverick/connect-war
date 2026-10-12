@@ -842,17 +842,16 @@ function overHtml() {
   const r = V.votes.rematch, d = V.votes.redraft;
   const title = g.result ? (V.local ? `Player ${g.result} wins` : g.result === V.seat ? "You win" : (V.n || 2) === 3 ? `${you(g.result)} wins` : "You lose") : "Draw";
   const n = V.n || 2;
-  const rOthers = r.filter(s => s !== V.seat).length, dOthers = d.filter(s => s !== V.seat).length;
-  const sub = n === 3 ? (rOthers ? `${rOthers} of ${n - 1} others want a rematch.` : dOthers ? `${dOthers} of ${n - 1} others want new loadouts.` : "")
-    : r.includes(other) ? "Your opponent wants a rematch." : d.includes(other) ? "Your opponent wants new loadouts." : "";
+  // One button: Rematch always goes back to the loadout screen (it votes "redraft" under the hood).
+  const others = d.filter(s => s !== V.seat).length, mine = d.includes(V.seat);
+  const sub = others ? (n === 3 ? `${others} of ${n - 1} others want a rematch.` : "Your opponent wants a rematch.") : "";
   return `<div class="over"><div class="box">
     <div class="eyebrow ${g.result ? "c" + g.result : ""}">Match over</div>
     <h2>${title}</h2>
     ${isRT() ? `<p class="muted">${V.local ? `Player 1 ${g.score[1]} – ${g.score[2]} Player 2` : `${g.score[V.seat]}–${g.score[other]}`}${g.sudden ? " in sudden death" : ""}</p>`
       : g.score ? `<p class="muted">${[...Array(V.n || 2).keys()].map(i => i + 1).map(p => `${you(p)} ${g.score[p] || 0}`).join(" · ")}</p>` : ""}
     ${sub ? `<p class="muted">${sub}</p>` : ""}
-    <button class="primary" data-act="rematch" ${r.includes(V.seat) && !V.local ? "disabled" : ""}>${r.includes(V.seat) ? "Waiting for opponent" : "Rematch"}</button>
-    <button class="ghost" data-act="redraft" ${d.includes(V.seat) && !V.local ? "disabled" : ""}>${d.includes(V.seat) ? "Waiting for opponent" : "New loadouts"}</button>
+    <button class="primary" data-act="redraft" ${mine && !V.local ? "disabled" : ""}>${mine && !V.local ? (n === 3 ? "Waiting for others" : "Waiting for opponent") : "Rematch"}</button>
     <button class="ghost" data-act="leave">Leave game</button></div></div>`;
 }
 
