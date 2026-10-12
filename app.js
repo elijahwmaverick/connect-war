@@ -1,7 +1,11 @@
 // Connect War over Supabase Realtime.
 // The host's browser owns the match (rules, clock, picks) and broadcasts the board.
 // The guest sends taps to the host and draws whatever the host sends back.
-const { ROWS, COLS, MAXE, TURN_S, L, AB, opp } = CW;
+const { MAXE, TURN_S, AB, opp } = CW;
+// Board size follows the game being shown (3-player games use 10×8).
+let ROWS = 7, COLS = 8, L = "ABCDEFGH";
+function syncDims(g) { const r = (g && g.rows) || 7, c = (g && g.cols) || 8; CW.setDims(r, c); ROWS = r; COLS = c; L = CW.L; }
+let playerCount = 2;
 const app = document.getElementById("app");
 
 function store(k, v) {
@@ -58,7 +62,10 @@ function openChannel(c, host) {
 function computePeer() {
   if (!channel) { peerOnline = false; return; }
   const others = Object.values(channel.presenceState()).flat().filter(p => p.token !== token);
-  peerOnline = others.some(p => (isHost ? p.seat === 2 && room && p.token === room.guest : p.seat === 1));
+  if (isHost) {
+    const need = room ? [room.guest, room.guest3].filter(Boolean) : [];
+    peerOnline = need.length > 0 && need.every(t => others.some(p => p.token === t));
+  } else peerOnline = others.some(p => p.seat === 1);
 }
 function closeChannel() {
   if (joinTimer) { clearInterval(joinTimer); joinTimer = null; }
@@ -147,27 +154,36 @@ function localViewSeat() {
 }
 function createLocal() {
   closeChannel();
-  room = newRoom("LOCAL", timerOn, gameMode);
-  room.guest = "local"; room.phase = "draft";
+  room = newRoom("LOCAL", timerOn, gameMode, playerCount);
+  room.guest = "local"; if (room.n === 3) room.guest3 = "local3"; room.phase = "draft";
   isHost = true; isLocal = true; localSeat = 1; localHandoff = false; peerOnline = true; code = null;
   sel = []; V = null; lastSeq = -1;
   publish();
 }
 
-function newRoom(c, timerOn, mode) {
-  return { code: c, mode: mode === "tactics" ? "tactics" : "rt", guest: null, phase: "lobby", picks: { 1: null, 2: null }, starter: 1, game: null,
+function newRoom(c, timerOn, mode, n) {
+  const m = mode === "tactics" ? "tactics" : "rt";
+  return { code: c, mode: m, n: m === "tactics" && n === 3 ? 3 : 2, guest: null, guest3: null, phase: "lobby", picks: { 1: null, 2: null, 3: null }, starter: 1, game: null,
     timerOn: !!timerOn, deadline: null, timerTurn: null, votes: { rematch: [], redraft: [] } };
 }
 function saveRoom() { if (room && !isLocal) store("cw_host_" + room.code, JSON.stringify(room)); }
 
+const roomN = () => (room && room.n) || 2;
+const seatsOf = () => [...Array(roomN()).keys()].map(i => i + 1);
+const tokenSeat = t => (t && t === room.guest ? 2 : t && t === room.guest3 ? 3 : 0);
+const allJoined = () => !!room.guest && (roomN() < 3 || !!room.guest3);
 function view(seat) {
   const other = opp(seat);
-  const both = !!(room.picks[1] && room.picks[2]);
+  const n = roomN(), all = seatsOf().every(s => room.picks[s]);
+  const both = n === 2 ? !!(room.picks[1] && room.picks[2]) : all;
   return {
+    n, joined: 1 + (room.guest ? 1 : 0) + (room.guest3 ? 1 : 0),
+    allPicks: all ? room.picks : null,
+    othersLocked: seatsOf().filter(s => s !== seat && room.picks[s]).length,
     code: room.code, matched: !!room.expectGuest, local: isLocal, mode: room.mode || "tactics", hostNow: Date.now(), seat, phase: room.phase, timerOn: room.timerOn,
     opponentJoined: seat === 1 ? !!room.guest : true,
     opponentConnected: seat === 1 ? peerOnline : true,
-    myPicks: room.picks[seat], oppLocked: !!room.picks[other], oppPicks: both ? room.picks[other] : null,
+    myPicks: room.picks[seat], oppLocked: n === 2 ? !!room.picks[other] : seatsOf().every(s => s === seat || room.picks[s]), oppPicks: both && n === 2 ? room.picks[other] : null,
     starter: room.starter, game: room.game,
     timeLeftMs: room.deadline && room.game && !room.game.over ? Math.max(0, room.deadline - Date.now()) : null,
     votes: room.votes
@@ -181,6 +197,7 @@ function publish() {
     return onView(JSON.parse(JSON.stringify(view(localViewSeat()))));
   }
   if (room.guest) send("state", { to: room.guest, view: view(2) });
+  if (room.guest3) send("state", { to: room.guest3, view: view(3) });
   onView(JSON.parse(JSON.stringify(view(1))));
 }
 
@@ -219,7 +236,7 @@ function startMatch() {
     clearTimer(); room.deadline = null; ensureRtTicker();
     return;
   }
-  room.game = CW.newGame(room.starter);
+  room.game = CW.newGame(room.starter, { players: roomN() });
   ensureRtTicker();
   room.votes = { rematch: [], redraft: [] };
   room.timerTurn = null; room.deadline = null; clearTimer();
@@ -236,7 +253,7 @@ function handle(seat, type, p) {
     if (!Array.isArray(ids) || ids.length !== 3 || new Set(ids).size !== 3 || !ids.every(id => pool.includes(id))) return "Pick exactly 3 different abilities.";
     if (room.picks[seat]) return "You already locked in.";
     room.picks[seat] = ids.slice();
-    if (room.picks[1] && room.picks[2]) startMatch();
+    if (seatsOf().every(s => room.picks[s])) startMatch();
     return null;
   }
   if (type === "vote") {
@@ -245,10 +262,10 @@ function handle(seat, type, p) {
     const other = kind === "rematch" ? "redraft" : "rematch";
     room.votes[other] = room.votes[other].filter(s => s !== seat);
     if (!room.votes[kind].includes(seat)) room.votes[kind].push(seat);
-    if (room.votes[kind].length === 2) {
-      room.starter = opp(room.starter);
+    if (room.votes[kind].length === roomN()) {
+      room.starter = (room.starter % roomN()) + 1;
       if (kind === "rematch") startMatch();
-      else { room.phase = "draft"; room.picks = { 1: null, 2: null }; room.game = null; room.votes = { rematch: [], redraft: [] }; clearTimer(); room.deadline = null; }
+      else { room.phase = "draft"; room.picks = { 1: null, 2: null, 3: null }; room.game = null; room.votes = { rematch: [], redraft: [] }; clearTimer(); room.deadline = null; }
     }
     return null;
   }
@@ -273,14 +290,19 @@ function handle(seat, type, p) {
 function hostHello(t) {
   if (!room) return;
   if (!room.guest && room.expectGuest && room.expectGuest !== t) { send("reject", { to: t, reason: "That game is reserved for a matched player." }); return; }
-  if (!room.guest) { room.guest = t; if (room.phase === "lobby") room.phase = "draft"; }
-  else if (room.guest !== t) { send("reject", { to: t, reason: "That game already has two players." }); return; }
+  if (!tokenSeat(t)) {
+    if (!room.guest) room.guest = t;
+    else if (roomN() === 3 && !room.guest3) room.guest3 = t;
+    else { send("reject", { to: t, reason: `That game already has ${roomN()} players.` }); return; }
+  }
+  if (room.phase === "lobby" && allJoined()) room.phase = "draft";
   computePeer();
   publish();
 }
 function hostAction(msg) {
-  if (!room || msg.token !== room.guest) return;
-  const e = handle(2, msg.type, msg.p);
+  const seat = room ? tokenSeat(msg.token) : 0;
+  if (!seat) return;
+  const e = handle(seat, msg.type, msg.p);
   send("ack", { to: msg.token, id: msg.id, res: e ? { error: e } : { ok: true } });
   if (!e) publish();
 }
@@ -290,7 +312,7 @@ function act(type, p, cb) {
   if (isHost) {
     let seat = 1;
     if (isLocal) {
-      if (type === "vote") { handle(1, type, p); handle(2, type, p); if (room.phase === "draft") { localSeat = 1; localHandoff = false; sel = []; } cb && cb({ ok: true }); return publish(); }
+      if (type === "vote") { seatsOf().forEach(st => handle(st, type, p)); if (room.phase === "draft") { localSeat = 1; localHandoff = false; sel = []; } cb && cb({ ok: true }); return publish(); }
       seat = (p && p.__seat) || (room.phase === "play" && room.mode !== "rt" && room.game ? room.game.cur : localSeat);
     }
     const e = handle(seat, type, p);
@@ -307,7 +329,7 @@ const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const randomCode = () => Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join("");
 function createGame(fixedCode, opts = {}) {
   const c = fixedCode || randomCode();
-  room = newRoom(c, opts.timerOn ?? timerOn, opts.mode || gameMode);
+  room = newRoom(c, opts.timerOn ?? timerOn, opts.mode || gameMode, opts.players || (opts.mode ? 2 : playerCount));
   if (opts.expectGuest) room.expectGuest = opts.expectGuest;
   store("cw_room", c); store("cw_role", "host");
   history.replaceState(null, "", "#" + c);
@@ -374,6 +396,7 @@ const hostNow = () => Date.now() + skew;
 const fmtClock = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
 
 function onView(v) {
+  syncDims(v.game);
   if (joinTimer && !isHost) { clearInterval(joinTimer); joinTimer = null; }
   if (!isHost) v.opponentConnected = peerOnline;
   const g = v.game;
@@ -457,7 +480,9 @@ const menuModal = () => `<div class="modal" role="dialog" aria-modal="true" aria
   <p class="muted">${V && V.phase === "play" && V.game && !V.game.over ? (isLocal ? "The match will end." : isHost ? "You're the host, so the match ends for both players." : "You'll leave the match. You can rejoin with the code.") : "You'll go back to the main menu."}</p>
   <button class="primary" data-act="menu-yes">Leave to main menu</button>
   <button class="ghost" data-act="menu-no">Stay</button></div></div>`;
-const you = p => (V && V.local ? `Player ${p}` : V && p === V.seat ? "You" : "Opponent");
+const you = p => (V && V.local ? `Player ${p}` : V && p === V.seat ? "You" : V && V.n === 3 ? `Player ${p}` : "Opponent");
+const picksOf = p => (V.allPicks && V.allPicks[p]) || (p === V.seat ? V.myPicks : V.oppPicks);
+const turnOrder = () => { const n = V.n || 2, out = []; for (let i = 0, p = V.seat; i < n; i++, p = (p % n) + 1) out.push(p); return out; };
 const localName = text => text; // local mode keeps "Player 1/2" wording
 
 function render() {
@@ -482,12 +507,13 @@ function renderSetupNeeded() {
 }
 
 function renderHandoff() {
+  const a = localSeat, b = localSeat + 1;
   app.innerHTML = `${header()}
   <section class="handoff">
-    <div class="eyebrow c1">Player 1 locked in</div>
-    <h2>Pass the phone to Player 2</h2>
-    <p class="muted">Player 1, look away while Player 2 picks.</p>
-    <button class="primary" data-act="p2ready">I'm Player 2</button>
+    <div class="eyebrow c${a}">Player ${a} locked in</div>
+    <h2>Pass the phone to Player ${b}</h2>
+    <p class="muted">Everyone else, look away while Player ${b} picks.</p>
+    <button class="primary" data-act="p2ready">I'm Player ${b}</button>
   </section>`;
 }
 
@@ -504,6 +530,7 @@ function renderSearching() {
   </section>`;
 }
 
+const three = () => gameMode === "tactics" && playerCount === 3;
 function renderHome() {
   const waiting = code && !isHost;
   app.innerHTML = `${header()}
@@ -513,8 +540,14 @@ function renderHome() {
       <button class="mode ${gameMode === "tactics" ? "on" : ""}" data-mode="tactics" aria-pressed="${gameMode === "tactics"}"><span class="cn">Connect War</span><span class="cd">Turn based with energy. One four wins.</span></button>
       <button class="mode ${gameMode === "rt" ? "on" : ""}" data-mode="rt" aria-pressed="${gameMode === "rt"}"><span class="cn">Connect War: Full Auto</span><span class="cd">Real time. No turns: drop charges and ability cooldowns. Scored fours turn to stone. First to 5 in 5 minutes.</span></button>
     </div>
-    ${gameMode === "tactics" ? `<label class="tog"><input type="checkbox" id="timerOn" ${timerOn ? "checked" : ""}> 20-second turn clock</label>` : ""}
-    <button class="primary" data-act="matchmake" ${sb ? "" : "disabled"}>Find match</button>
+    ${gameMode === "tactics" ? `<div class="seg" role="group" aria-label="Players">
+      <span class="seg-l">Players</span>
+      <button class="${playerCount === 2 ? "on" : ""}" data-players="2" aria-pressed="${playerCount === 2}">2</button>
+      <button class="${playerCount === 3 ? "on" : ""}" data-players="3" aria-pressed="${playerCount === 3}">3</button>
+    </div>
+    <label class="tog"><input type="checkbox" id="timerOn" ${timerOn ? "checked" : ""}> 20-second turn clock</label>` : ""}
+    ${three() ? `<p class="muted small">3 players: bigger 10×8 board, turns go 1 → 2 → 3. Freeze and Pop hit both opponents. Matchmaking is 2-player only.</p>` : ""}
+    <button class="primary" data-act="matchmake" ${sb && !three() ? "" : "disabled"}>Find match</button>
     <div class="row2">
       <button class="ghost strong" data-act="create" ${sb ? "" : "disabled"}>Play a friend</button>
       <button class="ghost strong" data-act="local">Play local</button>
@@ -540,11 +573,11 @@ function renderLobby() {
   app.innerHTML = `${header()}
   <section class="setup">
     <div class="eyebrow">${modeName()} · Game created</div>
-    <h2>Send this to your opponent</h2>
+    <h2>${(V.n || 2) === 3 ? "Send this to both opponents" : "Send this to your opponent"}</h2>
     <div class="code">${V.code}</div>
     <div class="link" id="link">${url}</div>
     <button class="ghost" data-act="copy">Copy link</button>
-    <p class="muted">Waiting for Player 2 to join… Keep this page open: your device runs the match.</p>
+    <p class="muted">${(V.n || 2) === 3 ? `${V.joined} of 3 players joined. Waiting for ${3 - V.joined} more…` : "Waiting for Player 2 to join…"} Keep this page open: your device runs the match.</p>
     <button class="ghost" data-act="leave">Cancel</button>
     <p class="err">${err}</p>
   </section>`;
@@ -559,7 +592,7 @@ function renderDraft() {
       <div class="eyebrow c${p}">You are Player ${p}</div>
       <h2>Locked in</h2>
       <p class="muted">${V.myPicks.map(id => AB[id].name).join(" · ")}</p>
-      <p class="muted">${V.oppLocked ? "Starting…" : "Waiting for your opponent to pick."}</p>
+      <p class="muted">${V.oppLocked ? "Starting…" : (V.n || 2) === 3 ? `Waiting for ${2 - (V.othersLocked || 0)} more player${2 - (V.othersLocked || 0) === 1 ? "" : "s"} to pick.` : "Waiting for your opponent to pick."}</p>
       ${dc}
     </section>`;
     return;
@@ -568,7 +601,7 @@ function renderDraft() {
   <section class="setup" data-p="${p}">
     <div class="eyebrow c${p}">${modeName()} · ${V.local ? "Local · " : ""}${V.local ? "" : "You are "}Player ${p}</div>
     <h2>${V.local ? `Player ${p}: pick 3 abilities` : "Pick 3 abilities"}</h2>
-    <p class="muted">${V.local ? (p === 1 ? "Player 2, look away. Picks stay hidden until the match starts." : "Player 1, look away.") : `Your opponent can't see your picks until both of you lock in. ${V.oppLocked ? "Your opponent has locked in." : ""}`}</p>
+    <p class="muted">${V.local ? "Everyone else, look away. Picks stay hidden until the match starts." : ((V.n || 2) === 3 ? `Picks stay hidden until everyone locks in. ${V.othersLocked ? `${V.othersLocked} of 2 others locked in.` : ""}` : `Your opponent can't see your picks until both of you lock in. ${V.oppLocked ? "Your opponent has locked in." : ""}`)}</p>
     ${dc}
     <div class="cards">${Object.entries(AB).filter(([id, a]) => (isRT() ? RT.POOL.includes(id) : !a.only)).map(([id, a]) => `<button class="card ${sel.includes(id) ? "on" : ""}" data-pick="${id}" aria-pressed="${sel.includes(id)}">
       <span class="cn">${a.name}</span><span class="cost">${costLabel(id)}</span><span class="cd">${descOf(id)}</span></button>`).join("")}</div>
@@ -580,11 +613,11 @@ function renderDraft() {
 const modeName = () => (V && V.mode === "rt" ? "Connect War: Full Auto" : "Connect War");
 const costLabel = id => (isRT() ? RT.CD[id] / 1000 + "s" : AB[id].cost + " EN");
 const descOf = id => (isRT() ? RT.DESC[id] : AB[id].desc);
-const frozenCols = (g, p) => (isRT() ? g.frozen.filter(f => f.player === p && f.until > hostNow()) : g.frozen && g.frozen.player === p ? [g.frozen] : []);
+const frozenCols = (g, p) => (isRT() ? g.frozen.filter(f => f.player === p && f.until > hostNow()) : g.frozen && (g.frozen.players ? g.frozen.players.includes(p) : g.frozen.player === p) ? [g.frozen] : []);
 
 function panelRT(p) {
   const g = V.game, s = g.score[p], fz = frozenCols(g, p);
-  const picks = p === V.seat ? V.myPicks : V.oppPicks;
+  const picks = picksOf(p);
   return `<div class="pl" data-p="${p}">
     <div class="nm"><b>${you(p)}</b><span class="score">${s}</span></div>
     <div class="pips" aria-label="${s} of ${RT.TARGET} points">${Array.from({ length: RT.TARGET }, (_, i) => `<i class="pt ${i < s ? "f" : ""}"></i>`).join("")}<span>${s}/${RT.TARGET}</span></div>
@@ -594,8 +627,8 @@ function panelRT(p) {
 
 function panel(p) {
   if (isRT()) return panelRT(p);
-  const g = V.game, e = g.energy[p], fz = g.frozen && g.frozen.player === p;
-  const picks = p === V.seat ? V.myPicks : V.oppPicks;
+  const g = V.game, e = g.energy[p], fz = frozenCols(g, p).length > 0;
+  const picks = picksOf(p);
   const on = g.cur === p && !g.over;
   return `<div class="pl ${on ? "on" : ""}" data-p="${p}">
     <div class="nm"><b>${you(p)}</b>${on ? '<span class="turn">Turn</span>' : ""}</div>
@@ -606,10 +639,10 @@ function panel(p) {
 
 const PROMPT = {
   block: () => "Block: tap a column to drop a neutral stone.",
-  freeze: () => "Freeze: tap a column to lock it for your opponent's next turn.",
+  freeze: () => `Freeze: tap a column to lock it for ${V && V.n === 3 ? "both opponents' next turns" : "your opponent's next turn"}.`,
   anchor: () => "Anchor: tap one of your discs.",
   lift: () => "Lift: tap a column whose top disc is yours.",
-  pop: () => `Pop: tap a column whose ${V && V.game && V.game.gdir === -1 ? "top" : "bottom"} disc is your opponent's.`,
+  pop: () => `Pop: tap a column whose ${V && V.game && V.game.gdir === -1 ? "top" : "bottom"} disc is ${V && V.n === 3 ? "an opponent's" : "your opponent's"}.`,
   swap: () => "Swap: tap a disc, then an adjacent disc of the other color.",
   flip: () => "Flip: tap a column with 2 or more discs.",
   punch: () => "Punch In: tap any cell that isn't an enemy disc.",
@@ -628,7 +661,7 @@ function statusText() {
     return (g.sudden ? "<b>Sudden death</b>: next score wins. " : "") + (nt || "Go! Drop discs as fast as your cooldowns allow.");
   }
   if (g.over && V.local) return g.result ? `Player ${g.result} connects four.` : "Board full. Draw.";
-  if (g.over) return g.result ? (g.result === V.seat ? "You connect four." : "Your opponent connects four.") : "Board full. Draw.";
+  if (g.over) return g.result ? (g.result === V.seat ? "You connect four." : V.n === 3 ? `Player ${g.result} connects four.` : "Your opponent connects four.") : "Board full. Draw.";
   if (mode) return PROMPT[mode]();
   if (V.local) {
     const who = `<b class="c${g.cur}">Player ${g.cur}</b>`;
@@ -637,20 +670,23 @@ function statusText() {
     if (g.abilityUsed && g.dropsMade === 0 && !g.dd) return nl + who + ": now drop a disc.";
     return nl + who + ": drop a disc, or use an ability first.";
   }
-  const note = g.note ? g.note.replace(new RegExp(`Player ${V.seat}`, "g"), "You").replace(new RegExp(`Player ${opp(V.seat)}`, "g"), "Opponent") + " " : "";
+  const note = g.note ? (V.n === 3 ? g.note.replace(new RegExp(`Player ${V.seat}\\b`, "g"), "You") : g.note.replace(new RegExp(`Player ${V.seat}`, "g"), "You").replace(new RegExp(`Player ${opp(V.seat)}`, "g"), "Opponent")) + " " : "";
   if (g.cur === V.seat) {
     if (g.dd && g.dropsMade === 1) return note + "Place your second disc in a different column. It can't complete a 4.";
     if (g.abilityUsed && g.dropsMade === 0 && !g.dd) return note + "<b>Your turn</b>: now drop a disc.";
     return note + "<b>Your turn</b>: drop a disc, or use an ability first.";
   }
-  return note + "Opponent's turn.";
+  return note + (V.n === 3 ? `<b class="c${g.cur}">Player ${g.cur}</b>'s turn.` : "Opponent's turn.");
 }
 
 function overHtml() {
   const g = V.game, other = opp(V.seat);
   const r = V.votes.rematch, d = V.votes.redraft;
   const title = g.result ? (V.local ? `Player ${g.result} wins` : g.result === V.seat ? "You win" : "You lose") : "Draw";
-  const sub = r.includes(other) ? "Your opponent wants a rematch." : d.includes(other) ? "Your opponent wants new loadouts." : "";
+  const n = V.n || 2;
+  const rOthers = r.filter(s => s !== V.seat).length, dOthers = d.filter(s => s !== V.seat).length;
+  const sub = n === 3 ? (rOthers ? `${rOthers} of ${n - 1} others want a rematch.` : dOthers ? `${dOthers} of ${n - 1} others want new loadouts.` : "")
+    : r.includes(other) ? "Your opponent wants a rematch." : d.includes(other) ? "Your opponent wants new loadouts." : "";
   return `<div class="over"><div class="box">
     <div class="eyebrow ${g.result ? "c" + g.result : ""}">Match over</div>
     <h2>${title}</h2>
@@ -753,7 +789,8 @@ function renderPlay() {
     cols += `<div class="${cls}" ${colStyle ? `style="${colStyle}"` : ""} role="button" aria-label="Column ${L[c]}">${cells}</div>`;
   }
   const dd = fxFind("double");
-  const ddFlash = dd ? `dd-flash" style="${dd.ad}` : "";
+  // Board class + inline style (column count, and a resumed Double Drop flash).
+  const ddFlash = `${dd ? "dd-flash" : ""}" style="grid-template-columns:repeat(${COLS},1fr);${dd ? dd.ad : ""}`;
   const mine = V.myPicks || [];
   const trayRT = () => `<div class="dropbar" data-cd="drop"><i></i><span class="cdt">${dropText(g, V.seat, now)}</span></div>
   <div class="tray">${mine.map(id => {
@@ -777,10 +814,10 @@ function renderPlay() {
     ? `<div class="banner">${isHost ? `Your opponent is disconnected. They can rejoin with code ${V.code}.` : "The host is disconnected. The game resumes when they reopen it."}</div>` : "";
   app.innerHTML = `${header(timer)}
   ${dc}
-  <div class="players">${panel(V.seat)}${panel(opp(V.seat))}</div>
+  <div class="players" style="grid-template-columns:repeat(${V.n || 2},1fr)">${turnOrder().map(panel).join("")}</div>
   <p class="status" aria-live="polite">${statusText()}</p>
   <div class="board-wrap"><div class="board ${!rt && g.over && g.result && !(flip && flip.phase === 1) ? "won" : ""} ${gravCls()} ${g.gdir === -1 ? "up" : ""} ${ddFlash}">${cols}</div>${pend ? `<div class="contest">Contested!</div>` : ""}${fxFind("contest") ? `<div class="contest cancel">Contested! Cancelled</div>` : ""}${g.over && showOver ? overHtml() : ""}</div>
-  <div class="letters">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
+  <div class="letters" style="grid-template-columns:repeat(${COLS},1fr)">${[...L].map(x => `<span>${x}</span>`).join("")}</div>
   ${g.gdir === -1 ? `<div class="gravtag">Gravity is up: discs rise from the bottom</div>` : ""}
   ${tray}
   <p class="err">${err}</p>
@@ -844,6 +881,8 @@ app.addEventListener("submit", e => {
 app.addEventListener("change", e => { if (e.target.id === "timerOn") timerOn = e.target.checked; });
 
 app.addEventListener("click", e => {
+  const pc = e.target.closest("[data-players]");
+  if (pc) { playerCount = +pc.dataset.players; return render(); }
   const modeBtn = e.target.closest("[data-mode]");
   if (modeBtn) { gameMode = modeBtn.dataset.mode; return render(); }
   const pick = e.target.closest("[data-pick]");
@@ -864,16 +903,16 @@ app.addEventListener("click", e => {
     if (a === "menu-yes") { confirmMenu = false; err = ""; return leave(); }
     if (a === "rejoin") { err = ""; return joinGame(store("cw_room")); }
     if (a === "reset") { hardReset(); err = "Saved games cleared."; return render(); }
-    if (a === "p2ready") { localHandoff = false; localSeat = 2; sel = []; return publish(); }
+    if (a === "p2ready") { localHandoff = false; localSeat += 1; sel = []; return publish(); }
     if (a === "copy") {
       const txt = document.getElementById("link").textContent;
       if (navigator.clipboard) navigator.clipboard.writeText(txt).then(() => { actEl.textContent = "Copied"; }).catch(() => {});
       return;
     }
     if (a === "lock") {
-      const first = isLocal && localSeat === 1;
+      const more = isLocal && room && localSeat < roomN();
       sendAct("pick", { ids: sel });
-      if (first && room && room.phase === "draft") { localHandoff = true; render(); }
+      if (more && room.phase === "draft") { localHandoff = true; render(); }
       return;
     }
     if (a === "rematch" || a === "redraft") return sendAct("vote", { kind: a });

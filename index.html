@@ -12,6 +12,7 @@
   --board:#1b2c47;--board-edge:#13203a;--hole:#0b0f15;
   --p1:#f0683a;--p1d:#a8401c;--p1l:#ffb08f;
   --p2:#43b4cc;--p2d:#1f6f81;--p2l:#a6e6f2;
+  --p3:#a97cf2;--p3d:#5f37a8;--p3l:#dac6ff;
   --stone:#6f7886;--frost:#9fd3ff;--gold:#f2c14e;--danger:#ff5d5d;
   --fd:'Chakra Petch',ui-sans-serif,system-ui,sans-serif;
   --fb:'Barlow',ui-sans-serif,system-ui,sans-serif;
@@ -270,6 +271,22 @@ details ul{padding-left:18px;margin:8px 0 0}
 .radar::after{content:"";position:absolute;inset:38%;border-radius:50%;background:radial-gradient(circle at 34% 30%,var(--p1l),var(--p1) 45%,var(--p1d))}
 @keyframes ping{0%{transform:scale(.3);opacity:.9}100%{transform:scale(1);opacity:0}}
 @media (prefers-reduced-motion:reduce){.radar i{animation:none;opacity:.4}}
+
+/* Player 3 (violet) */
+.c3{color:var(--p3)}
+.d6{background:radial-gradient(circle at 34% 30%,var(--p3l),var(--p3) 45%,var(--p3d))}
+.pl[data-p="3"]{--pc:var(--p3)}
+.setup[data-p="3"]{--pc:var(--p3)}
+.players .pl .lo{overflow-wrap:anywhere}
+/* Players 2 / 3 picker */
+.seg{display:flex;align-items:center;gap:6px}
+.seg-l{font-family:var(--fd);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-right:4px}
+.seg button{min-width:44px;padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);font-family:var(--fd);font-weight:700;cursor:pointer}
+.seg button.on{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold) inset}
+
+/* Keep the header on one line on narrow phones */
+.top h1,.exit{white-space:nowrap}
+@media (max-width:440px){.top h1{font-size:16px;letter-spacing:.1em}.tbar{width:56px}.exit{padding:5px 8px;font-size:11px}.hdr-right{gap:8px}}
 </style>
 </head>
 <body>

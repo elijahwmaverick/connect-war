@@ -1,6 +1,14 @@
 // Connect War rules engine. Shared by the server (authoritative) and the browser (for highlighting targets).
 (function (root) {
-  const ROWS = 7, COLS = 8, MAXE = 7, TURN_S = 20, L = "ABCDEFGH";
+  // Board size is per game (2 players: 8×7, 3 players: 10×8); setDims switches it for whichever game is active.
+  let ROWS = 7, COLS = 8, L = "ABCDEFGH";
+  const MAXE = 7, TURN_S = 20;
+  function setDims(rows, cols) { ROWS = rows; COLS = cols; L = "ABCDEFGHIJKL".slice(0, cols); }
+  // Disc values: player 1 = 1, player 2 = 2, player 3 = 6 (3, 4, 5 are stone, grenade, fixed stone).
+  const PV = p => (p === 3 ? 6 : p);
+  const isDisc = v => v === 1 || v === 2 || v === 6;
+  const nextP = (g, p) => (p % (g.n || 2)) + 1;
+  const others = (g, p) => [...Array(g.n || 2).keys()].map(i => i + 1).filter(x => x !== p);
   const AB = {
     block:  { name: "Block",       cost: 2, t: "col",  desc: "Drop a neutral stone that counts for no one." },
     freeze: { name: "Freeze",      cost: 2, t: "col",  desc: "Lock a column for the opponent's next turn." },
@@ -15,14 +23,20 @@
     punch:  { name: "Punch In",    cost: 0, t: "cell", only: "rt", desc: "Punch your disc into any cell that isn't an enemy disc. It can replace a stone, a fixed stone or a grenade." },
     gravity:{ name: "Gravity Flip", cost: 6, t: "none", desc: "Reverse gravity. All discs fly to the other side, and new discs come from there until it's flipped again." }
   };
-  const opp = p => 3 - p;
+  const opp = p => 3 - p; // 2-player shorthand (Full Auto)
   const blank = v => Array.from({ length: ROWS }, () => Array(COLS).fill(v));
   const clone = g => ({ grid: g.grid.map(r => r.slice()), anc: g.anc.map(r => r.slice()) });
 
-  function newGame(starter) {
+  const frozenOn = (f, p) => (f.players ? f.players.includes(p) : f.player === p);
+  function newGame(starter, opts = {}) {
+    const n = opts.players === 3 ? 3 : 2;
+    if (n === 3) setDims(8, 10); else setDims(7, 8);
+    // Later seats start with a little energy to offset moving later.
+    const energy = {}; for (let i = 0, p = starter; i < n; i++, p = (p % n) + 1) energy[p] = i;
     const g = {
+      n, rows: ROWS, cols: COLS,
       grid: blank(0), anc: blank(false), cur: starter,
-      energy: { [starter]: 0, [opp(starter)]: 1 },
+      energy,
       frozen: null, abilityUsed: false, dropsLeft: 1, dropsMade: 0, dd: false, firstCol: null,
       over: false, result: null, win: [], last: null, gained: 0, note: "", ev: null, seq: 0, turnId: 0
     };
@@ -79,7 +93,7 @@
       const cells = [];
       for (let k = 0; k < 4; k++) {
         const rr = r + dr * k, cc = c + dc * k;
-        if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS || g.grid[rr][cc] !== p) break;
+        if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS || g.grid[rr][cc] !== PV(p)) break;
         cells.push(rr + "," + cc);
       }
       if (cells.length === 4) cells.forEach(x => out.add(x));
@@ -99,8 +113,11 @@
     }
   }
   function endTurn(g) {
-    if (g.frozen && g.frozen.player === g.cur) g.frozen = null;
-    g.cur = opp(g.cur);
+    if (g.frozen) {
+      g.frozen.players = (g.frozen.players || [g.frozen.player]).filter(x => x !== g.cur);
+      if (!g.frozen.players.length) g.frozen = null;
+    }
+    g.cur = nextP(g, g.cur);
     startTurn(g);
   }
   function finish(g, w, cells) {
@@ -109,9 +126,9 @@
     return true;
   }
   function resolve(g) {
-    const a = lines(g, g.cur), b = lines(g, opp(g.cur));
+    const a = lines(g, g.cur);
     if (a.length) return finish(g, g.cur, a);
-    if (b.length) return finish(g, opp(g.cur), b);
+    for (let i = 1, p = nextP(g, g.cur); i < (g.n || 2); i++, p = nextP(g, p)) { const b = lines(g, p); if (b.length) return finish(g, p, b); }
     if (isFull(g)) return finish(g, 0, []);
     return false;
   }
@@ -119,11 +136,11 @@
   function canDrop(g, c) {
     if (c < 0 || c >= COLS || topEmpty(g, c) < 0) return false;
     const f = g.frozen;
-    if (f && f.player === g.cur && f.col === c) return false;
+    if (f && frozenOn(f, g.cur) && f.col === c) return false;
     if (g.dd && g.dropsMade === 1) {
       if (c === g.firstCol) return false;
       const r = topEmpty(g, c);
-      g.grid[r][c] = g.cur; const w = lines(g, g.cur).length > 0; g.grid[r][c] = 0;
+      g.grid[r][c] = PV(g.cur); const w = lines(g, g.cur).length > 0; g.grid[r][c] = 0;
       if (w) return false;
     }
     return true;
@@ -135,13 +152,13 @@
     if (g.over) return "The match is over.";
     if (!canDrop(g, c)) {
       const f = g.frozen;
-      if (f && f.player === g.cur && f.col === c) return `Column ${L[c]} is frozen this turn.`;
+      if (f && frozenOn(f, g.cur) && f.col === c) return `Column ${L[c]} is frozen this turn.`;
       if (topEmpty(g, c) < 0) return `Column ${L[c]} is full.`;
       if (c === g.firstCol) return "The second disc must go in a different column.";
       return "The second Double Drop disc can't complete a 4.";
     }
     const p = g.cur, r = topEmpty(g, c);
-    g.grid[r][c] = p; g.last = { r, c };
+    g.grid[r][c] = PV(p); g.last = { r, c };
     g.ev = { type: "drop", r, c }; g.seq++;
     g.note = `Player ${p} dropped in ${L[c]}.`;
     if (g.dropsMade === 0) g.firstCol = c;
@@ -157,8 +174,8 @@
     const p = g.cur;
     switch (id) {
       case "block": case "freeze": case "grenade": return topEmpty(g, c) >= 0;
-      case "lift": { const t = topDisc(g, c); return t >= 0 && g.grid[t][c] === p; }
-      case "pop": { const f = floorRow(g); return g.grid[f][c] === opp(p) && !g.anc[f][c]; }
+      case "lift": { const t = topDisc(g, c); return t >= 0 && g.grid[t][c] === PV(p); }
+      case "pop": { const f = floorRow(g); const v = g.grid[f][c]; return isDisc(v) && v !== PV(p) && !g.anc[f][c]; }
       case "flip": return count(g, c) >= 2;
       case "reinforce": { const sg = floorSeg(g, c); return !!sg && segStack(g, c, sg).length < sg[1] - sg[0] + 1; }
     }
@@ -169,7 +186,7 @@
     if (!inB(r1, c1) || !inB(r2, c2)) return false;
     if (Math.abs(r1 - r2) + Math.abs(c1 - c2) !== 1) return false;
     const a = g.grid[r1][c1], b = g.grid[r2][c2];
-    return (a === 1 || a === 2) && !g.anc[r1][c1] && (b === 1 || b === 2) && a !== b && !g.anc[r2][c2];
+    return isDisc(a) && !g.anc[r1][c1] && isDisc(b) && a !== b && !g.anc[r2][c2];
   }
   function swapFirst(g, r, c) {
     if (!inB(r, c)) return false;
@@ -177,7 +194,7 @@
   }
   function validCell(g, id, r, c, sel) {
     if (!inB(r, c)) return false;
-    if (id === "anchor") return g.grid[r][c] === g.cur && !g.anc[r][c];
+    if (id === "anchor") return g.grid[r][c] === PV(g.cur) && !g.anc[r][c];
     if (id === "punch") return [0, 3, 4, FIXED].includes(g.grid[r][c]);
     if (id === "swap") return sel ? partner(g, sel[0], sel[1], r, c) : swapFirst(g, r, c);
     return false;
@@ -209,7 +226,7 @@
     const c = a.c;
     let ev = { type: id }, note = "";
     if (id === "block") { const r = topEmpty(g, c); g.grid[r][c] = 3; g.last = { r, c }; ev = { type: "block", r, c }; note = `Player ${p} placed a stone in ${L[c]}.`; }
-    if (id === "freeze") { g.frozen = { col: c, player: opp(p) }; ev = { type: "freeze", c }; note = `Player ${p} froze column ${L[c]}.`; }
+    if (id === "freeze") { g.frozen = { col: c, players: others(g, p) }; ev = { type: "freeze", c }; note = `Player ${p} froze column ${L[c]}.`; }
     if (id === "lift") { const t2 = topDisc(g, c); ev = { type: "lift", r: t2, c, v: g.grid[t2][c] }; g.grid[t2][c] = 0; g.anc[t2][c] = false; note = `Player ${p} lifted a disc from ${L[c]}.`; }
     if (id === "pop") { ev = { type: "pop", c, prev: clone(g) }; const f = floorRow(g); g.grid[f][c] = 0; g.anc[f][c] = false; compactCol(g, c); g.last = null; note = `Player ${p} popped column ${L[c]}.`; }
     if (id === "reinforce") { ev = reinforce(g, c, p); note = `Player ${p} reinforced column ${L[c]}.`; }
@@ -277,7 +294,7 @@
   function reinforce(g, c, p) {
     const sg = floorSeg(g, c), list = segStack(g, c, sg);
     const ev = { type: "reinforce", c, n: list.length + 1, gdir: g.gdir || 1 };
-    writeSeg(g, c, sg, [[p, false], ...list]);
+    writeSeg(g, c, sg, [[PV(p), false], ...list]);
     g.last = { r: floorRow(g), c };
     return ev;
   }
@@ -291,7 +308,8 @@
     endTurn(g);
   }
 
-  const api = { ROWS, COLS, MAXE, TURN_S, L, AB, opp, newGame, canDrop, drop, ability, timeout, validCol, validCell, hasTarget, abilityReady, count,
+  const api = { get ROWS() { return ROWS; }, get COLS() { return COLS; }, get L() { return L; }, setDims, PV, isDisc, nextP, others,
+    MAXE, TURN_S, AB, opp, newGame, canDrop, drop, ability, timeout, validCol, validCell, hasTarget, abilityReady, count,
     FIXED, segs, compactCol, flipCol, reinforce, floorSeg,
     lines, topEmpty, topDisc, floorRow, isFull, flipGravity, up, stack, writeStack, clone, partner, blank, placeGrenade, detonate, tickBombs, FUSE_MS };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.CW = api;

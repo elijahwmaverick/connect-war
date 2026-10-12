@@ -4,7 +4,8 @@
 // sudden death (cooldowns at 1/4) until someone scores. Uses the board helpers from game.js.
 (function (root) {
   const C = root.CW || require("./game.js");
-  const { ROWS, COLS, L, AB, opp } = C;
+  const { AB, opp } = C;
+  const ROWS = 7, COLS = 8, L = "ABCDEFGH"; // Full Auto is always 2 players on 8×7
   const GCD = 150; // global cooldown after any action
   const DROP_CD = 2500, MAX_CHARGES = 3, MATCH_MS = 5 * 60 * 1000, TARGET = 5, FREEZE_MS = 5000;
   // Abilities available in Full Auto (Anchor, Lift, Pop and Double Drop are turn-based only).
@@ -17,6 +18,7 @@
   };
 
   function newGame(now) {
+    C.setDims(ROWS, COLS);
     return {
       mode: "rt", grid: C.blank(0), anc: C.blank(false), cur: 0,
       score: { 1: 0, 2: 0 }, ready: { 1: {}, 2: {} }, frozen: [], pending: null,
