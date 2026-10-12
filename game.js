@@ -20,7 +20,7 @@
     flip:   { name: "Flip",        cost: 5, t: "col",  desc: "Invert one column top to bottom." },
     grenade:{ name: "Grenade",     cost: 3, t: "col",  desc: "Drop a grenade. After 2 seconds it explodes, destroying the discs directly above, below, left and right of it." },
     reinforce:{ name: "Reinforce", cost: 3, t: "col",  desc: "Slide your disc into the floor end of a column, pushing the stack away from the floor. Ends your turn." },
-    punch:  { name: "Punch In",    cost: 3, t: "cell", desc: "Punch your disc into any cell that isn't an enemy disc. It can replace a stone, a fixed stone or a grenade." },
+    punch:  { name: "Punch In",    cost: 3, t: "cell", desc: "Punch your disc into any cell that isn't an enemy disc. It can replace a stone, a fixed stone or a grenade. Ends your turn." },
     rotate: { name: "Rotate",      cost: 5, t: "dir",  only: "tactics", desc: "Turn the board 90° left or right. That side becomes the floor and every disc falls." },
     shift:  { name: "Shift",       cost: 3, t: "row",  only: "tactics", desc: "Slide every disc in a row one space left or right. The end disc wraps around; fixed stones stay put." },
     insert: { name: "Insert",      cost: 2, t: "side", desc: "Slide your disc in from the left or right edge of a row. It stops at the first occupied cell or the far wall, then falls. Ends your turn." },
@@ -322,7 +322,7 @@
     g.ev = ev; g.seq++; g.note = note;
     if (resolve(g)) return null;
     if (id === "grenade") { g.awaitBomb = g.bombSeq; return null; } // the turn ends when it explodes (host ticker)
-    if (id === "insert" || id === "flask" || id === "reinforce") { endTurn(g); return null; } // these replace your drop and end the turn
+    if (id === "insert" || id === "flask" || id === "reinforce" || id === "punch") { endTurn(g); return null; } // these replace your drop and end the turn
     if (!anyDrop(g)) { endTurn(g); g.note = note + ` Player ${p} has no open column, so the turn ends.` + g.note; }
     return null;
   }

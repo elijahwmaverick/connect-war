@@ -17,6 +17,7 @@
     double: "Instantly refill all 3 drop charges.",
     insert: AB.insert.desc.replace(" Ends your turn.", ""),
     reinforce: AB.reinforce.desc.replace(" Ends your turn.", ""),
+    punch: AB.punch.desc.replace(" Ends your turn.", ""),
     flask: AB.flask.desc.replace(" Ends your turn.", "")
   };
 
