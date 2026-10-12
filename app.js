@@ -440,6 +440,21 @@ let mode = null, swapSel = null, localMsg = "", rowSel = null;
 let lastSeq = -1, lastOver = false, showOver = false, flip = null, busy = false, confirmMenu = false;
 // Short animations in flight. Re-renders resume them part-way (negative animation-delay) instead of restarting or dropping them.
 let fx = [];
+// How long a move's on-screen motion lasts (first phase + the discs settling), so scoring
+// effects wait until every disc has arrived. One table for every move type.
+const PHASE1_MS = { flip: 560, pop: 420, gravity: 340, rotate: 620, shift: 460, insert: 460, boom: 520 };
+const FALL_MS = 450;
+function moveLeadMs(ev) {
+  if (!ev) return 0;
+  const t = ev.type;
+  if (PHASE1_MS[t] !== undefined) return PHASE1_MS[t] + FALL_MS;            // two-phase moves
+  if (t === "drop" || t === "block") return FALL_MS;
+  if (t === "punch") return (ev.from !== undefined && ev.from !== ev.r ? FALL_MS : 0) + 650;
+  if (t === "swap") return 500;
+  if (t === "reinforce") return 450;
+  if (t === "lift") return 600;
+  return 0;
+}
 let winAt = 0; // when the winning four may light up (after the winning move has animated)
 const FX_MS = { banner: 1500, punch: 650, drop: 450, freeze: 650, anchor: 550, swap: 500, lift: 600, double: 750, score: 900, contest: 1100, reinforce: 450 };
 // Full Auto drop-charge readout, e.g. "Drops ●●○ · 1.4s".
@@ -472,7 +487,7 @@ function onView(v) {
       flip = null; busy = false;
       if (lastSeq !== -1 && g.ev && g.ev.ability) fx.push({ type: "banner", ability: g.ev.ability, by: g.ev.by, start: fxNow() });
       if (lastSeq !== -1 && g.ev && g.ev.scores) {
-        const t = g.ev.type, lead = t === "flip" || t === "pop" || t === "gravity" ? 900 : t === "boom" ? 560 : (FX_MS[t === "block" ? "drop" : t] || 0) + 40;
+        const lead = moveLeadMs(g.ev);
         const cells = g.ev.scores.flatMap(sc => sc.cells), owner = {};
         g.ev.scores.forEach(sc => sc.cells.forEach(k => { owner[k] = sc.p; }));
         fx.push({ type: "score", petrify: cells, owner, start: fxNow() + lead });
@@ -495,7 +510,7 @@ function onView(v) {
         showOver = lastSeq === -1;
         // Let the move that won play out before the four lights up.
         const t = g.ev && g.ev.type;
-        let moveMs = lastSeq === -1 ? 0 : flip ? ({ pop: 420, clear: 820, gravity: 340 }[flip.type] || 560) + 480 : (FX_MS[t === "block" ? "drop" : t] || 0) + 60;
+        let moveMs = lastSeq === -1 ? 0 : moveLeadMs(g.ev) + 60;
         if (moveMs && g.ev && g.ev.scores) moveMs += 850; // let the four turn to stone first
         winAt = fxNow() + moveMs;
         if (moveMs) setTimeout(() => { if (V && V.game && V.game.over && !busy) render(); }, moveMs + 30);
