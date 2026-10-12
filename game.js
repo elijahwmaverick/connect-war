@@ -195,6 +195,7 @@
   function drop(g, c) {
     if (g.over) return "The match is over.";
     if (g.revertAt) return "Gravity is flipping back…";
+    if (g.awaitBomb) return "Wait for the grenade to explode.";
     if (!canDrop(g, c)) {
       const f = g.frozen;
       if (f && frozenOn(f, g.cur) && f.col === c) return `Column ${L[c]} is frozen this turn.`;
@@ -271,6 +272,7 @@
     const id = a && a.id;
     if (!AB[id]) return "Unknown ability.";
     if (g.revertAt) return "Gravity is flipping back…";
+    if (g.awaitBomb) return "Wait for the grenade to explode.";
     if (!abilityReady(g, id, loadout)) return `${AB[id].name} isn't available right now.`;
     const p = g.cur, nm = AB[id].name, t = AB[id].t;
     if (t === "col" && !validCol(g, id, a.c)) return `Not a valid column for ${nm}.`;
@@ -319,7 +321,8 @@
     ev.ability = id; ev.by = p;
     g.ev = ev; g.seq++; g.note = note;
     if (resolve(g)) return null;
-    if (id === "grenade" || id === "insert" || id === "flask" || id === "reinforce") { endTurn(g); return null; } // these replace your drop and end the turn
+    if (id === "grenade") { g.awaitBomb = g.bombSeq; return null; } // the turn ends when it explodes (host ticker)
+    if (id === "insert" || id === "flask" || id === "reinforce") { endTurn(g); return null; } // these replace your drop and end the turn
     if (!anyDrop(g)) { endTurn(g); g.note = note + ` Player ${p} has no open column, so the turn ends.` + g.note; }
     return null;
   }
@@ -368,14 +371,19 @@
       resolve(g);
       return true;
     }
-    if (g.over || !g.bombs || !g.bombs.length) return false;
+    if (g.over) return false;
+    // The thrower's turn ends once their grenade has gone off (or if it vanished, e.g. a board wipe).
+    const passTurn = () => { if (g.awaitBomb) { g.awaitBomb = null; if (!g.over) endTurn(g); } };
+    if (g.awaitBomb && !(g.bombs || []).some(b => b.id === g.awaitBomb)) { passTurn(); g.ev = { type: "turn" }; g.seq++; return true; }
+    if (!g.bombs || !g.bombs.length) return false;
     const due = g.bombs.find(b => b.until <= now);
     if (!due) return false;
     const ev = detonate(g, due.id);
-    if (!ev) return false;
+    if (!ev) { if (due.id === g.awaitBomb) { passTurn(); g.ev = { type: "turn" }; g.seq++; return true; } return false; }
     g.note = "A grenade exploded.";
     g.ev = ev; g.seq++;
     resolve(g);
+    if (due.id === g.awaitBomb) passTurn();
     return true;
   }
 
@@ -489,7 +497,7 @@
   }
 
   function timeout(g) {
-    if (g.over) return;
+    if (g.over || g.awaitBomb) return;
     const p = g.cur;
     g.energy[p] = Math.max(0, g.energy[p] - g.gained);
     g.note = `Player ${p} ran out of time: no drop, no energy.`;

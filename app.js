@@ -228,7 +228,7 @@ function armTimer(extraMs = 0) {
   room.deadline = Date.now() + Math.max(0, remaining) + extraMs;
   hostTimer = setTimeout(() => {
     hostTimer = null;
-    if (!room || !room.game || room.game.over) return;
+    if (!room || !room.game || room.game.over || room.game.awaitBomb) return; // a pending grenade passes the turn itself
     CW.timeout(room.game);
     armTimer();
     publish();
@@ -240,7 +240,7 @@ function ensureRtTicker() {
   rtTicker = setInterval(() => {
     if (!room || !room.game || room.game.over) return;
     if (room.mode === "rt") { if (RT.tick(room.game, Date.now())) publish(); }
-    else if (CW.tickBombs(room.game, Date.now())) { if (room.game.over) { clearTimer(); room.deadline = null; } publish(); }
+    else if (CW.tickBombs(room.game, Date.now())) { if (room.game.over) { clearTimer(); room.deadline = null; } else armTimer(); publish(); }
   }, 50);
 }
 function startMatch() {
@@ -844,6 +844,7 @@ function statusText() {
   if (g.over && V.local) return g.result ? `Player ${g.result} wins with ${CW.TARGET} fours.` : "Draw.";
   if (g.over) return g.result ? (g.result === V.seat ? `You win with ${CW.TARGET} fours.` : `${you(g.result)} wins with ${CW.TARGET} fours.`) : "Draw.";
   if (mode) return PROMPT[mode]();
+  if (g.awaitBomb) return (g.note ? named(g.note) + " " : "") + "The turn passes when it explodes.";
   if (V.local) {
     const who = `<b class="c${g.cur}">Player ${g.cur}</b>`;
     const nl = g.note ? g.note + " " : "";
@@ -941,7 +942,7 @@ function renderPlay() {
   syncDims(flip && flip.phase === 1 && flip.type === "rotate" ? flip.prev : V.game);
   const rt = isRT(), now = hostNow();
   const g0 = V.game, g = rt ? { ...g0, cur: V.local ? modeSeat : V.seat } : g0;
-  const myTurn = rt ? !g.over && !busy : g.cur === V.seat && !g.over && !busy;
+  const myTurn = rt ? !g.over && !busy : g.cur === V.seat && !g.over && !busy && !g.awaitBomb;
   const canDropCol = c => (rt ? RT.canDrop(g, V.seat, c, now) : CW.canDrop(g, c));
   const shownSrc = flip && flip.phase === 1 ? (flip.type === "shift" || flip.type === "insert" ? flip.mid : flip.prev) : null;
   const shown = shownSrc ? { ...g, grid: shownSrc.grid, anc: shownSrc.anc } : g;
@@ -1098,7 +1099,7 @@ function renderPlay() {
     <li>A full board with no four is wiped.</li></ul></details>` : `<details><summary>Rules</summary><ul>
     <li>Each four in a row scores a point and turns into fixed stones. First to ${CW.TARGET} fours wins.</li>
     <li>A drop smashes the first fixed stone it lands on and keeps falling. A full board is wiped.</li>
-    <li>Using Grenade, Insert, Stone Flask or Reinforce ends your turn.</li>
+    <li>Using Insert, Stone Flask or Reinforce ends your turn. A Grenade ends your turn when it explodes; nobody can move until then.</li>
     <li>Each turn: gain 1 energy (max 7), optionally use one ability, then drop one disc.</li>
     <li>Gold ring = anchored disc (immune to Pop and Swap). Striped column = frozen for one player.</li>
     <li>If one move gives two players their winning four, the player who moved wins.</li>
